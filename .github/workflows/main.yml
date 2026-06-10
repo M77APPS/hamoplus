@@ -61,7 +61,6 @@ jobs:
             fi
           fi
 
-          echo "Found archive: $FOUND_ARCH ($FOUND_EXT)"
           mkdir -p $TMP_WORKSPACE
 
           case "$FOUND_EXT" in
@@ -138,25 +137,33 @@ jobs:
           ksp.incremental=false
           PROPEOF
 
-      - name: Ensure settings.gradle exists
+      - name: Ensure settings.gradle and app module
         run: |
           if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
-            if [ -f "build.gradle.kts" ]; then
-              echo 'rootProject.name = "app"' > settings.gradle.kts
+            if [ -d "app" ]; then
+              echo 'include ":app"' > settings.gradle
             else
               echo 'rootProject.name = "app"' > settings.gradle
             fi
           fi
 
+          if [ -d "app" ]; then
+            if [ -f "settings.gradle" ] && ! grep -q ':app' settings.gradle; then
+              echo 'include ":app"' >> settings.gradle
+            fi
+            if [ -f "settings.gradle.kts" ] && ! grep -q ':app' settings.gradle.kts; then
+              echo 'include(":app")' >> settings.gradle.kts
+            fi
+          fi
+
+          if [ -f "app/build.gradle" ]; then
+            if ! grep -q 'com.android.application' app/build.gradle; then
+              sed -i '1s/^/apply plugin: "com.android.application"\n/' app/build.gradle
+            fi
+          fi
+
       - name: AGP Version Detector & Repository Injector
         run: |
-          for f in build.gradle build.gradle.kts; do
-            if [ -f "$f" ] && grep -q "com.android.tools.build:gradle:" "$f"; then
-              echo "Found AGP in $f"
-              break
-            fi
-          done
-
           find . \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0 | while IFS= read -r -d '' gradlefile; do
             if ! grep -q 'google()' "$gradlefile"; then
               sed -i 's#repositories {#repositories {\n        google()\n        mavenCentral()#g' "$gradlefile"
@@ -218,7 +225,11 @@ jobs:
                -Dorg.gradle.workers.max=2 \
                -Djava.awt.headless=true; then
             BUILD_OK=1
-          elif ./gradlew assembleDebug -x lint -x test --no-daemon --no-configuration-cache; then
+          elif ./gradlew assembleRelease --no-daemon --stacktrace --no-configuration-cache \
+               -Dorg.gradle.workers.max=2 \
+               -Djava.awt.headless=true; then
+            BUILD_OK=1
+          elif ./gradlew assemble --no-daemon --stacktrace --no-configuration-cache; then
             BUILD_OK=1
           fi
           echo "BUILD_OK=$BUILD_OK" >> $GITHUB_ENV
@@ -232,7 +243,7 @@ jobs:
       - name: Post-Failure AGP/Gradle Auto-Fix
         if: env.BUILD_OK == '0'
         run: |
-          echo "Trying AGP 8.5.0 fix..."
+          echo "Attempting AGP 8.5.0..."
           if [ -f "build.gradle" ]; then
             sed -i 's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.5.0/g' build.gradle
           fi
@@ -244,7 +255,7 @@ jobs:
           if ./gradlew assembleDebug --no-daemon --stacktrace --no-configuration-cache; then
             echo "BUILD_OK=1" >> $GITHUB_ENV
           else
-            echo "Still failing, trying AGP 8.2.0 and Gradle 8.5..."
+            echo "Trying AGP 8.2.0 + Gradle 8.5..."
             if [ -f "build.gradle" ]; then
               sed -i 's/com.android.tools.build:gradle:8.5.0/com.android.tools.build:gradle:8.2.0/g' build.gradle
             fi
