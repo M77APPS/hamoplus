@@ -1,12 +1,4 @@
-# ========================================================================
-# ♾️ HAMO OMNIPOTENT SELF‑HEALING ANDROID COMPILER (The Final YAML)
-# ========================================================================
-# Version 9.9.9 – مخصص لرفع أي ملف أندرويد مضغوط وتحويله إلى APK تلقائياً
-# يتضمن: الكشف الذاتي، إصلاح Gradle، إصلاح AGP، إنشاء مفاتيح التوقيع،
-# حقن المستودعات الناقصة، معالجة KSP و Kotlin، استخراج ذكي من أي امتداد.
-# ========================================================================
-
-name: ♾️ Hamo Auto‑APK Builder (Ultimate)
+name: Hamo Auto-APK Builder
 
 on:
   push:
@@ -16,56 +8,37 @@ on:
   workflow_dispatch:
     inputs:
       java-version:
-        description: 'إصدار Java (اختياري)'
+        description: 'Java version'
         required: false
         default: '21'
 
 env:
   DEFAULT_JAVA_VERSION: ${{ github.event.inputs.java-version || '21' }}
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true"
-  KOTLIN_OPTS: "-Dkotlin.compiler.execution.strategy=in-process"
   ANDROID_SDK_ROOT: "/usr/local/lib/android/sdk"
   TMP_WORKSPACE: "omni_extracted_workspace"
 
 jobs:
   infinite-build:
-    name: 💠 Universal Android Cyber‑Compiler
+    name: Universal Android Cyber-Compiler
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
-      # ─────────────────────────────────────────────────────────────────
-      # Step 0: تنزيل المستودع (الملف المضغوط يكون موجوداً)
-      # ─────────────────────────────────────────────────────────────────
-      - name: 0. 📥 Checkout Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
           clean: true
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 1: تثبيت أدوات فك الضغط (Unrar, 7z, ...)
-      # ─────────────────────────────────────────────────────────────────
-      - name: 1. 🛠️ Install Extraction Toolkit
+      - name: Install Extraction Tools
         run: |
-          echo "::group::Updating APT & Installing Unarchivers"
           sudo apt-get update -qq
           sudo apt-get install -y -qq unzip p7zip-full unrar tar gzip coreutils sed file
-          echo "::endgroup::"
-          echo "Installed versions:"
-          unzip -v | head -1
-          7z | head -2
-          unrar | head -1
-          tar --version | head -1
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 2: الكشف الذكي عن الأرشيف واستخراجه
-      # ─────────────────────────────────────────────────────────────────
-      - name: 2. 🔍 Auto‑Detect & Extract Archive
+      - name: Auto-Detect & Extract Archive
         id: extract
         run: |
-          echo "::group::Scanning for Compressed Android Project"
-          # قائمة الامتدادات المدعومة
           EXTS=(zip rar 7z tar.gz tgz tar)
           FOUND_ARCH=""
           FOUND_EXT=""
@@ -79,21 +52,18 @@ jobs:
           done
 
           if [ -z "$FOUND_ARCH" ]; then
-            echo "⚠️ No archive found. Checking for raw project..."
             if find . -maxdepth 3 -name 'build.gradle*' | grep -q .; then
-              echo "✅ Existing Android source detected. Will compile directly."
               echo "RAW_PROJECT=true" >> $GITHUB_ENV
               exit 0
             else
-              echo "❌ FATAL: No archive and no build.gradle found!"
+              echo "No archive and no build.gradle found"
               exit 1
             fi
           fi
 
-          echo "🎯 Found: $FOUND_ARCH (type: $FOUND_EXT)"
+          echo "Found archive: $FOUND_ARCH ($FOUND_EXT)"
           mkdir -p $TMP_WORKSPACE
 
-          # تنفيذ الاستخراج حسب النوع
           case "$FOUND_EXT" in
             zip)   unzip -q -o "$FOUND_ARCH" -d $TMP_WORKSPACE ;;
             rar)   unrar x -o+ "$FOUND_ARCH" $TMP_WORKSPACE/ ;;
@@ -103,99 +73,58 @@ jobs:
             *)     echo "Unsupported extension"; exit 1 ;;
           esac
 
-          echo "✅ Extraction completed. Removing original archive."
           rm -f "$FOUND_ARCH"
           echo "RAW_PROJECT=false" >> $GITHUB_ENV
-          echo "::endgroup::"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 3: اكتشاف جذر المشروع ونقل الملفات
-      # ─────────────────────────────────────────────────────────────────
-      - name: 3. 🧭 Locate & Move Project Root
+      - name: Locate & Move Project Root
         if: env.RAW_PROJECT != 'true'
         run: |
-          echo "::group::Finding Android Root Directory"
-          # البحث عن أول build.gradle (أو build.gradle.kts)
           TRUE_ROOT=$(find $TMP_WORKSPACE -type f \( -name "build.gradle" -o -name "build.gradle.kts" \) -printf '%h\n' | head -1)
           if [ -z "$TRUE_ROOT" ]; then
-            echo "❌ No build.gradle inside extracted archive!"
+            echo "No build.gradle inside archive"
             exit 1
           fi
-          echo "📁 Project root: $TRUE_ROOT"
 
-          # نقل جميع المحتويات إلى جذر المستودع
           if [ "$TRUE_ROOT" != "." ] && [ "$TRUE_ROOT" != "./" ]; then
-            echo "Moving files from '$TRUE_ROOT' to workspace..."
             shopt -s dotglob
             mv "$TRUE_ROOT"/* .  2>/dev/null || true
             shopt -u dotglob
           fi
 
-          # حذف المجلد المؤقت والملفات غير المرغوبة
           rm -rf $TMP_WORKSPACE
-          echo "::endgroup::"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 4: تنظيف شامل (local.properties, .gradle, build, .idea ...)
-      # ─────────────────────────────────────────────────────────────────
-      - name: 4. 🧹 Deep Cleanse Workspace
+      - name: Deep Cleanse Workspace
         run: |
-          echo "::group::Removing stale config & caches"
           find . -name "local.properties" -delete
           find . -name ".gradle" -type d -exec rm -rf {} + 2>/dev/null || true
           find . -name ".idea" -type d -exec rm -rf {} + 2>/dev/null || true
           find . -name "build" -type d -exec rm -rf {} + 2>/dev/null || true
           find . -name "*.iml" -delete 2>/dev/null || true
-          echo "::endgroup::"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 5: إعداد Java (مع اكتشاف نسخة AGP لتحديد جافا المناسبة)
-      # ─────────────────────────────────────────────────────────────────
-      - name: 5. ☕ Setup Java (Intelligent JDK Selector)
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: ${{ env.DEFAULT_JAVA_VERSION }}
           cache: 'gradle'
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 6: إصلاح / إنشاء Gradle Wrapper (بنسخة حديثة)
-      # ─────────────────────────────────────────────────────────────────
-      - name: 6. ⚙️ Repair/Generate Gradle Wrapper
+      - name: Repair/Generate Gradle Wrapper
         run: |
-          echo "::group::Gradle Wrapper Audit"
-          # تحديد ما إذا كان المشروع يستخدم Kotlin DSL
-          IS_KTS=false
-          if [ -f "build.gradle.kts" ]; then IS_KTS=true; fi
-
-          # إذا لم يوجد gradlew ننشئه بالنسخة 8.10 (مستقرة جداً)
           if [ ! -f "gradlew" ]; then
-            echo "No gradlew found. Generating wrapper with Gradle 8.10..."
             gradle wrapper --gradle-version 8.10 2>/dev/null || true
           fi
 
-          # تحديث gradle-wrapper.properties إلى أحدث نسخة مستقرة (8.10)
           WRAPPER_PROP=$(find . -name "gradle-wrapper.properties" | head -1)
           if [ -n "$WRAPPER_PROP" ]; then
-            echo "Found wrapper properties: $WRAPPER_PROP"
-            # استخدام sed لتغيير رابط التوزيع
             sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10-bin.zip|' "$WRAPPER_PROP"
-            echo "Updated to Gradle 8.10"
           fi
 
-          # التأكد من صلاحية gradlew (تصحيح نهايات الأسطر)
           chmod +x gradlew 2>/dev/null || true
           sed -i 's/\r$//' gradlew 2>/dev/null || true
-          echo "::endgroup::"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 7: حقن gradle.properties (إصلاح الذاكرة، تعطيل ksp المتزايد)
-      # ─────────────────────────────────────────────────────────────────
-      - name: 7. 🧪 Inject Perfect gradle.properties
+      - name: Inject Perfect gradle.properties
         run: |
-          echo "::group::Writing Best‑Practice gradle.properties"
           cat <<'PROPEOF' > gradle.properties
-          # === Auto‑Generated by Hamo Omni‑Compiler ===
           org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true
           org.gradle.parallel=false
           org.gradle.configureondemand=false
@@ -208,78 +137,51 @@ jobs:
           kotlin.compiler.execution.strategy=in-process
           ksp.incremental=false
           PROPEOF
-          echo "::endgroup::"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 8: الكشف التلقائي عن AGP (إصدار Android Gradle Plugin)
-      #           وإصلاح المستودعات في ملفات build.gradle
-      # ─────────────────────────────────────────────────────────────────
-      - name: 8. 🔎 AGP Version Detector & Repository Injector
+      - name: Ensure settings.gradle exists
         run: |
-          echo "::group::Detecting AGP & Fixing Repositories"
-          AGP_VERSION="unknown"
-          # فحص ملف build.gradle (root) أو build.gradle.kts لاستخراج AGP
-          for f in build.gradle build.gradle.kts; do
-            if [ -f "$f" ]; then
-              if grep -q "com.android.tools.build:gradle:" "$f"; then
-                AGP_VERSION=$(grep -oP 'com.android.tools.build:gradle:\K[0-9]+\.[0-9]+\.[0-9]+' "$f" | head -1)
-                echo "Found AGP: $AGP_VERSION"
-                break
-              fi
+          if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
+            if [ -f "build.gradle.kts" ]; then
+              echo 'rootProject.name = "app"' > settings.gradle.kts
+            else
+              echo 'rootProject.name = "app"' > settings.gradle
             fi
-          done
-
-          # إذا لم نجد نستخدم قيمة افتراضية آمنة
-          if [ "$AGP_VERSION" = "unknown" ]; then
-            echo "AGP not explicitly declared. Will rely on default."
           fi
 
-          # حقن google() و mavenCentral() و jitpack() في جميع ملفات gradle
-          echo "Injecting missing repositories..."
-          find . \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0 | while IFS= read -r -d '' gradlefile; do
-            # إضافة google() و mavenCentral() إذا لم تكن موجودة
-            if ! grep -q 'google()' "$gradlefile"; then
-              sed -i 's/repositories {/repositories {\n        google()\n        mavenCentral()/g' "$gradlefile"
-              echo "  Added google()+mavenCentral() to $gradlefile"
-            fi
-            # إضافة jitpack.io للطوارئ
-            if ! grep -q 'jitpack.io' "$gradlefile"; then
-              sed -i 's/repositories {/repositories {\n        maven { url "https://jitpack.io" }/g' "$gradlefile"
+      - name: AGP Version Detector & Repository Injector
+        run: |
+          for f in build.gradle build.gradle.kts; do
+            if [ -f "$f" ] && grep -q "com.android.tools.build:gradle:" "$f"; then
+              echo "Found AGP in $f"
+              break
             fi
           done
-          echo "::endgroup::"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 9: إصلاح إصدارات Kotlin و Compose إذا لزم الأمر
-      # ─────────────────────────────────────────────────────────────────
-      - name: 9. 🧩 Kotlin & Compose Compatibility Fixer
-        run: |
-          echo "::group::Kotlin/Compose Version Harmonizer"
-          # البحث عن إصدار kotlin الحالي واستبداله بـ 1.9.22 (آمن)
           find . \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0 | while IFS= read -r -d '' gradlefile; do
-            # Kotlin version fix (بفرض وجود سطر مثل ext.kotlin_version أو kotlin("jvm") )
+            if ! grep -q 'google()' "$gradlefile"; then
+              sed -i 's#repositories {#repositories {\n        google()\n        mavenCentral()#g' "$gradlefile"
+            fi
+            if ! grep -q 'jitpack.io' "$gradlefile"; then
+              sed -i 's#repositories {#repositories {\n        maven { url "https://jitpack.io" }#g' "$gradlefile"
+            fi
+          done
+
+      - name: Kotlin & Compose Compatibility Fixer
+        run: |
+          find . \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0 | while IFS= read -r -d '' gradlefile; do
             if grep -q 'kotlin("jvm")' "$gradlefile" 2>/dev/null; then
-              # Kotlin DSL: استبدال الإصدار في plugins block
               sed -i 's/kotlin("jvm") version "[^"]*"/kotlin("jvm") version "1.9.22"/g' "$gradlefile"
             fi
             if grep -q 'kotlin_version' "$gradlefile" 2>/dev/null; then
               sed -i "s/kotlin_version = '[^']*'/kotlin_version = '1.9.22'/g" "$gradlefile"
             fi
-            # Compose Compiler (مطلوب توافقه مع Kotlin)
             if grep -q 'composeOptions' "$gradlefile" 2>/dev/null; then
-              # تعيين kotlinCompilerExtensionVersion = "1.5.10" متوافقة مع Kotlin 1.9.22
               sed -i 's/kotlinCompilerExtensionVersion[[:space:]]*=[[:space:]]*"[^"]*"/kotlinCompilerExtensionVersion = "1.5.10"/g' "$gradlefile"
             fi
           done
-          echo "::endgroup::"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 10: إنشاء Keystore تصحيح تلقائي (يغطي جميع المسارات)
-      # ─────────────────────────────────────────────────────────────────
-      - name: 10. 🔐 Auto‑Generate Debug Keystore (Absolute Paths)
+      - name: Auto-Generate Debug Keystore
         run: |
-          echo "::group::Crafting Android Debug Keystore"
-          # إنشاء المفتاح في الجذر
           keytool -genkey -v \
             -keystore debug.keystore \
             -alias androiddebugkey \
@@ -288,122 +190,71 @@ jobs:
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
-            -dname "CN=Hamo Omni, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
+            -dname "CN=Hamo, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
             -noprompt 2>/dev/null || true
 
-          # نسخه إلى كل مجلد يحوي build.gradle (لتجنب أخطاء المسارات المطلقة)
           find . -type d \( -name "app" -o -name "src" \) | while read -r dir; do
             cp debug.keystore "$dir/" 2>/dev/null || true
           done
-          # نسخة احتياطية شاملة
           cp debug.keystore ./debug.keystore 2>/dev/null || true
-          echo "::endgroup::"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 11: إعداد local.properties (مسار SDK)
-      # ─────────────────────────────────────────────────────────────────
-      - name: 11. 🗺️ Write local.properties (SDK Path)
-        run: |
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-          echo "local.properties created with sdk.dir=$ANDROID_SDK_ROOT"
+      - name: Write local.properties
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 12: تجربة أولية لتنظيف المشروع
-      # ─────────────────────────────────────────────────────────────────
-      - name: 12. 🧽 First Clean Build Attempt
+      - name: First Clean Attempt
         continue-on-error: true
-        run: |
-          echo "::group::Initial Gradle Clean"
-          ./gradlew clean --no-daemon --no-configuration-cache --warning-mode=all 2>&1 || true
-          echo "::endgroup::"
+        run: ./gradlew clean --no-daemon --no-configuration-cache --warning-mode=all 2>&1 || true
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 13: تحويل مهام التجميع (Debug) مع عدة محاولات للتصحيح
-      # ─────────────────────────────────────────────────────────────────
-      - name: 13. 🏗️ Assemble Debug (Multi‑Path Fallback)
+      - name: Assemble Debug (Multi-Path Fallback)
         id: assemble
         run: |
-          echo "::group::Building APK (Debug)"
-
-          # الخيار الأول: assembleDebug العادي
           if ./gradlew assembleDebug --no-daemon --stacktrace --no-configuration-cache \
                -Dorg.gradle.workers.max=2 \
                -Djava.awt.headless=true; then
-            echo "✅ assembleDebug succeeded"
             echo "BUILD_OK=1" >> $GITHUB_ENV
             exit 0
           fi
 
-          echo "⚠️ Primary build failed. Trying sub‑module fallback..."
-
-          # إذا فشل، جرب التجميع المباشر على وحدة :app
           if ./gradlew :app:assembleDebug --no-daemon --stacktrace --no-configuration-cache \
                -Dorg.gradle.workers.max=2 \
                -Djava.awt.headless=true; then
-            echo "✅ :app:assembleDebug succeeded"
             echo "BUILD_OK=1" >> $GITHUB_ENV
             exit 0
           fi
 
-          # محاولة إجبارية مع تجاهل lint و test
-          echo "⚠️ Trying debug with -x lint -x test"
           if ./gradlew assembleDebug -x lint -x test --no-daemon --no-configuration-cache; then
-            echo "✅ Forced assembleDebug succeeded"
             echo "BUILD_OK=1" >> $GITHUB_ENV
             exit 0
           fi
 
-          echo "❌ All build attempts failed. Will collect logs."
           echo "BUILD_OK=0" >> $GITHUB_ENV
           exit 1
         continue-on-error: true
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 14: إذا فشل التجميع، محاولة تصحيح إضافية (AGP / Gradle)
-      # ─────────────────────────────────────────────────────────────────
-      - name: 14. 🩺 Post‑Failure AGP/Gradle Auto‑Fix
+      - name: Post-Failure AGP/Gradle Auto-Fix
         if: env.BUILD_OK == '0'
         run: |
-          echo "::group::Attempting automatic AGP version repair"
-
-          # البحث عن أحدث AGP مدعوم (مثلاً 8.5.0) واستبداله في root build.gradle
           if [ -f "build.gradle" ]; then
             sed -i 's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.5.0/g' build.gradle
           fi
           if [ -f "build.gradle.kts" ]; then
             sed -i 's/"com.android.tools.build:gradle:[^"]*"/"com.android.tools.build:gradle:8.5.0"/g' build.gradle.kts
           fi
-
-          # تحديث Gradle wrapper إلى 8.10 مرة أخرى لضمان التوافق
           ./gradlew wrapper --gradle-version 8.10 2>/dev/null || true
-
-          # المحاولة النهائية بعد الإصلاح
-          echo "Retrying assembleDebug after repair..."
           ./gradlew assembleDebug --no-daemon --stacktrace --no-configuration-cache || true
-          echo "::endgroup::"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 15: البحث عن ملفات APK الناتجة
-      # ─────────────────────────────────────────────────────────────────
-      - name: 15. 🕵️ Locate All Generated APKs
+      - name: Locate All Generated APKs
         if: always()
         run: |
-          echo "::group::APK Hunting"
           mkdir -p output-apks
-          APKS_FOUND=$(find . -type f -name "*.apk" | wc -l)
-          echo "Total APKs found: $APKS_FOUND"
-          if [ "$APKS_FOUND" -gt 0 ]; then
-            find . -type f -name "*.apk" -exec cp {} output-apks/ \;
-            echo "✅ APKs copied to output-apks/"
+          find . -type f -name "*.apk" -exec cp {} output-apks/ \;
+          if [ "$(ls -A output-apks)" ]; then
+            echo "APKs found and copied"
           else
-            echo "⚠️ No APK files found. Check build logs."
+            echo "No APK files found"
           fi
-          echo "::endgroup::"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 16: رفع الـ APK كقطعة أثرية (artifact)
-      # ─────────────────────────────────────────────────────────────────
-      - name: 16. 📤 Upload APK Artifact
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Hamo-Omnipotent-APK
@@ -411,13 +262,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      # ─────────────────────────────────────────────────────────────────
-      # Step 17: الإخطار في حالة الفشل (ملخص الأخطاء)
-      # ─────────────────────────────────────────────────────────────────
-      - name: 17. 🚨 Failure Summary
+      - name: Failure Summary
         if: failure()
         run: |
-          echo "❌ Workflow failed. Please check the logs above."
-          echo "If APK was not generated, ensure your project structure is correct."
-          echo "Common issues: missing AndroidManifest, unsupported AGP/Kotlin versions."
-          echo "Omni‑compiler attempted multiple fixes – review the raw logs."
+          echo "Workflow failed. Check the logs above."
