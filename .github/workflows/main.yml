@@ -208,32 +208,31 @@ jobs:
       - name: Assemble Debug (Multi-Path Fallback)
         id: assemble
         run: |
+          set +e
+          BUILD_OK=0
           if ./gradlew assembleDebug --no-daemon --stacktrace --no-configuration-cache \
                -Dorg.gradle.workers.max=2 \
                -Djava.awt.headless=true; then
-            echo "BUILD_OK=1" >> $GITHUB_ENV
-            exit 0
-          fi
-
-          if ./gradlew :app:assembleDebug --no-daemon --stacktrace --no-configuration-cache \
+            BUILD_OK=1
+          elif ./gradlew :app:assembleDebug --no-daemon --stacktrace --no-configuration-cache \
                -Dorg.gradle.workers.max=2 \
                -Djava.awt.headless=true; then
-            echo "BUILD_OK=1" >> $GITHUB_ENV
-            exit 0
+            BUILD_OK=1
+          elif ./gradlew assembleDebug -x lint -x test --no-daemon --no-configuration-cache; then
+            BUILD_OK=1
           fi
-
-          if ./gradlew assembleDebug -x lint -x test --no-daemon --no-configuration-cache; then
-            echo "BUILD_OK=1" >> $GITHUB_ENV
+          echo "BUILD_OK=$BUILD_OK" >> $GITHUB_ENV
+          if [ "$BUILD_OK" -eq 1 ]; then
             exit 0
+          else
+            exit 1
           fi
-
-          echo "BUILD_OK=0" >> $GITHUB_ENV
-          exit 1
         continue-on-error: true
 
       - name: Post-Failure AGP/Gradle Auto-Fix
         if: env.BUILD_OK == '0'
         run: |
+          echo "Trying AGP 8.5.0 fix..."
           if [ -f "build.gradle" ]; then
             sed -i 's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.5.0/g' build.gradle
           fi
@@ -241,26 +240,53 @@ jobs:
             sed -i 's/"com.android.tools.build:gradle:[^"]*"/"com.android.tools.build:gradle:8.5.0"/g' build.gradle.kts
           fi
           ./gradlew wrapper --gradle-version 8.10 2>/dev/null || true
-          ./gradlew assembleDebug --no-daemon --stacktrace --no-configuration-cache || true
+          set +e
+          if ./gradlew assembleDebug --no-daemon --stacktrace --no-configuration-cache; then
+            echo "BUILD_OK=1" >> $GITHUB_ENV
+          else
+            echo "Still failing, trying AGP 8.2.0 and Gradle 8.5..."
+            if [ -f "build.gradle" ]; then
+              sed -i 's/com.android.tools.build:gradle:8.5.0/com.android.tools.build:gradle:8.2.0/g' build.gradle
+            fi
+            if [ -f "build.gradle.kts" ]; then
+              sed -i 's/"com.android.tools.build:gradle:8.5.0"/"com.android.tools.build:gradle:8.2.0"/g' build.gradle.kts
+            fi
+            ./gradlew wrapper --gradle-version 8.5 2>/dev/null || true
+            if ./gradlew assembleDebug --no-daemon --stacktrace --no-configuration-cache; then
+              echo "BUILD_OK=1" >> $GITHUB_ENV
+            fi
+          fi
 
       - name: Locate All Generated APKs
         if: always()
         run: |
           mkdir -p output-apks
           find . -type f -name "*.apk" -exec cp {} output-apks/ \;
-          if [ "$(ls -A output-apks)" ]; then
-            echo "APKs found and copied"
+          if [ -n "$(ls -A output-apks)" ]; then
+            echo "APKS_FOUND=1" >> $GITHUB_ENV
           else
-            echo "No APK files found"
+            echo "APKS_FOUND=0" >> $GITHUB_ENV
           fi
 
       - name: Upload APK Artifact
+        if: env.APKS_FOUND == '1'
         uses: actions/upload-artifact@v4
         with:
           name: Hamo-Omnipotent-APK
           path: output-apks/*.apk
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error
+
+      - name: Upload Build Log (if no APK)
+        if: env.APKS_FOUND == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            *.log
+            **/build/reports/**
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Failure Summary
         if: failure()
