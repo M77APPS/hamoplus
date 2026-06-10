@@ -108,15 +108,15 @@ jobs:
           java-version: ${{ env.DEFAULT_JAVA_VERSION }}
           cache: 'gradle'
 
-      - name: Force Gradle Wrapper to 9.3.1
+      - name: Force Gradle Wrapper to 9.5.1
         run: |
           if [ ! -f "gradlew" ]; then
-            gradle wrapper --gradle-version 9.3.1 2>/dev/null || true
+            gradle wrapper --gradle-version 9.5.1 2>/dev/null || true
           fi
 
           WRAPPER_PROP=$(find . -name "gradle-wrapper.properties" | head -1)
           if [ -n "$WRAPPER_PROP" ]; then
-            sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-bin.zip|' "$WRAPPER_PROP"
+            sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.5.1-bin.zip|' "$WRAPPER_PROP"
           fi
 
           chmod +x gradlew 2>/dev/null || true
@@ -203,13 +203,6 @@ jobs:
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-      - name: Neutralize Strict Gradle Version Check
-        run: |
-          find . -path "*/gradle/wrapper/gradle-wrapper.properties" -exec sed -i 's/^/#/' {} \;
-          find . -name "*.gradle" -o -name "*.gradle.kts" | while read -r f; do
-            sed -i 's/VersionCheckPlugin/DisabledVersionCheck/g' "$f"
-          done
-
       - name: First Clean Attempt
         continue-on-error: true
         run: ./gradlew clean --no-daemon --no-configuration-cache --warning-mode=all 2>&1 || true
@@ -242,10 +235,10 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Post-Failure AGP Auto-Fix (Gradle 9.3.1 fixed)
+      - name: Post-Failure AGP Auto-Fix (Gradle 9.5.1 fixed)
         if: env.BUILD_OK == '0'
         run: |
-          echo "Trying AGP 8.9.0 with Gradle 9.3.1"
+          echo "Trying AGP 8.9.0 with Gradle 9.5.1"
           if [ -f "build.gradle" ]; then
             sed -i 's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.9.0/g' build.gradle
           fi
@@ -257,7 +250,7 @@ jobs:
             exit 0
           fi
 
-          echo "Trying AGP 8.10.0 with Gradle 9.3.1"
+          echo "Trying AGP 8.10.0 with Gradle 9.5.1"
           if [ -f "build.gradle" ]; then
             sed -i 's/com.android.tools.build:gradle:8.9.0/com.android.tools.build:gradle:8.10.0/g' build.gradle
           fi
