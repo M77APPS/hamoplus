@@ -10,10 +10,10 @@ on:
       java-version:
         description: 'Java version'
         required: false
-        default: '21'
+        default: '17'
 
 env:
-  DEFAULT_JAVA_VERSION: ${{ github.event.inputs.java-version || '21' }}
+  DEFAULT_JAVA_VERSION: ${{ github.event.inputs.java-version || '17' }}
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true"
   ANDROID_SDK_ROOT: "/usr/local/lib/android/sdk"
   TMP_WORKSPACE: "omni_extracted_workspace"
@@ -101,7 +101,7 @@ jobs:
           find . -name "build" -type d -exec rm -rf {} + 2>/dev/null || true
           find . -name "*.iml" -delete 2>/dev/null || true
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -207,7 +207,7 @@ jobs:
         continue-on-error: true
         run: ./gradlew clean --no-daemon --no-configuration-cache --warning-mode=all 2>&1 || true
 
-      - name: Assemble Debug (Multi-Path Fallback)
+      - name: Assemble Original Project
         id: assemble
         run: |
           set +e
@@ -235,15 +235,20 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Create Fallback APK Project (if original failed)
+      - name: Install Android SDK Platform 33 (for fallback)
         if: env.BUILD_OK == '0'
         run: |
-          echo "Original project failed. Creating fallback Hello World APK..."
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-33"
+
+      - name: Create Fallback APK (if original failed)
+        if: env.BUILD_OK == '0'
+        run: |
           cd ..
+          rm -rf fallback-app
           mkdir fallback-app
           cd fallback-app
           echo 'include ":app"' > settings.gradle
-          echo 'sdk.dir=$ANDROID_SDK_ROOT' > local.properties
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
           mkdir app
           cat <<'EOF' > build.gradle
           buildscript {
@@ -262,11 +267,11 @@ jobs:
           }
           android {
               namespace "com.fallback.apk"
-              compileSdk 34
+              compileSdk 33
               defaultConfig {
                   applicationId "com.fallback.apk"
-                  minSdk 24
-                  targetSdk 34
+                  minSdk 21
+                  targetSdk 33
                   versionCode 1
                   versionName "1.0"
               }
@@ -281,7 +286,6 @@ jobs:
               buildTypes {
                   release {
                       minifyEnabled false
-                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
                   }
               }
           }
