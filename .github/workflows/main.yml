@@ -1,4 +1,4 @@
-name: Hamo Auto-APK Builder (Final Fix)
+name: Hamo Auto-APK Builder (Ultimate Success)
 
 on:
   push:
@@ -50,49 +50,64 @@ jobs:
       - name: Build Guaranteed APK
         run: |
           set -e
-          mkdir -p final-apk-builder/app/src/main/java/com/example/app
-          cd final-apk-builder
+          mkdir -p final-app/app/src/main/java/com/example/app
+          cd final-app
 
-          echo 'include ":app"' > settings.gradle
+          # settings.gradle with pluginManagement
+          cat > settings.gradle << 'SETTINGS'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "final-app"
+          include ':app'
+          SETTINGS
 
-          echo 'buildscript {' > build.gradle
-          echo '    repositories {' >> build.gradle
-          echo '        google()' >> build.gradle
-          echo '        mavenCentral()' >> build.gradle
-          echo '    }' >> build.gradle
-          echo '    dependencies {' >> build.gradle
-          echo '        classpath "com.android.tools.build:gradle:8.5.0"' >> build.gradle
-          echo '    }' >> build.gradle
-          echo '}' >> build.gradle
+          # root build.gradle (empty but valid)
+          echo '// Empty root build.gradle' > build.gradle
 
-          echo 'apply plugin: "com.android.application"' > app/build.gradle
-          echo 'android {' >> app/build.gradle
-          echo '    namespace "com.example.app"' >> app/build.gradle
-          echo '    compileSdk 33' >> app/build.gradle
-          echo '    defaultConfig {' >> app/build.gradle
-          echo '        applicationId "com.example.app"' >> app/build.gradle
-          echo '        minSdk 21' >> app/build.gradle
-          echo '        targetSdk 33' >> app/build.gradle
-          echo '        versionCode 1' >> app/build.gradle
-          echo '        versionName "1.0"' >> app/build.gradle
-          echo '    }' >> app/build.gradle
-          echo '    signingConfigs {' >> app/build.gradle
-          echo '        debug {' >> app/build.gradle
-          echo '            storeFile file("debug.keystore")' >> app/build.gradle
-          echo '            storePassword "android"' >> app/build.gradle
-          echo '            keyAlias "androiddebugkey"' >> app/build.gradle
-          echo '            keyPassword "android"' >> app/build.gradle
-          echo '        }' >> app/build.gradle
-          echo '    }' >> app/build.gradle
-          echo '    buildTypes {' >> app/build.gradle
-          echo '        release {' >> app/build.gradle
-          echo '            minifyEnabled false' >> app/build.gradle
-          echo '        }' >> app/build.gradle
-          echo '    }' >> app/build.gradle
-          echo '}' >> app/build.gradle
+          # app/build.gradle using plugins block
+          cat > app/build.gradle << 'APPBUILD'
+          plugins {
+              id 'com.android.application'
+          }
+          android {
+              namespace "com.example.app"
+              compileSdk 33
+              defaultConfig {
+                  applicationId "com.example.app"
+                  minSdk 21
+                  targetSdk 33
+                  versionCode 1
+                  versionName "1.0"
+              }
+              signingConfigs {
+                  debug {
+                      storeFile file("debug.keystore")
+                      storePassword 'android'
+                      keyAlias 'androiddebugkey'
+                      keyPassword 'android'
+                  }
+              }
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                  }
+              }
+          }
+          APPBUILD
 
-          # إنشاء AndroidManifest.xml مع android:exported
-          cat > app/src/main/AndroidManifest.xml << 'MANIFESTEOF'
+          # AndroidManifest.xml
+          cat > app/src/main/AndroidManifest.xml << 'MANIFEST'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <application
@@ -109,9 +124,10 @@ jobs:
                   </activity>
               </application>
           </manifest>
-          MANIFESTEOF
+          MANIFEST
 
-          cat > app/src/main/java/com/example/app/MainActivity.java << 'JAVAEOF'
+          # MainActivity.java
+          cat > app/src/main/java/com/example/app/MainActivity.java << 'JAVA'
           package com.example.app;
           import android.app.Activity;
           import android.os.Bundle;
@@ -121,8 +137,9 @@ jobs:
                   super.onCreate(savedInstanceState);
               }
           }
-          JAVAEOF
+          JAVA
 
+          # Generate keystore
           keytool -genkey -v \
             -keystore app/debug.keystore \
             -alias androiddebugkey \
@@ -136,25 +153,19 @@ jobs:
 
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-          # تعطيل فحص export التلقائي
-          echo 'android.disableAutomaticComponentExport=true' >> gradle.properties
-
-          # طباعة المانيفست للتأكيد
-          echo "=== AndroidManifest.xml content ==="
-          cat app/src/main/AndroidManifest.xml
-
-          gradle wrapper --gradle-version 8.10
+          gradle wrapper --gradle-version 8.5
           ./gradlew assembleDebug --no-daemon --stacktrace -Djava.awt.headless=true
 
           cp app/build/outputs/apk/debug/app-debug.apk ../output-apks/guaranteed.apk
 
-      - name: Collect APKs
+      - name: Collect and Upload APK
         run: |
           mkdir -p output-apks
-          if [ ! -f output-apks/guaranteed.apk ]; then
-            echo "APK build failed."
+          if [ ! -f final-app/app/build/outputs/apk/debug/app-debug.apk ]; then
+            echo "APK not found."
             exit 1
           fi
+          cp final-app/app/build/outputs/apk/debug/app-debug.apk output-apks/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
