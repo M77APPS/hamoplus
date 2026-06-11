@@ -1,4 +1,4 @@
-name: Hamo Auto-APK Builder (Final Fix)
+name: Hamo Auto-APK Builder (Final Fixed)
 
 on:
   push:
@@ -61,13 +61,11 @@ jobs:
           if [ ! -f "gradlew" ]; then
             gradle wrapper --gradle-version 9.3.1 2>/dev/null || true
           fi
-          cat <<'PROPS' > gradle.properties
-          org.gradle.jvmargs=-Xmx4096m
-          android.useAndroidX=true
-          android.enableJetifier=false
-          kotlin.incremental=false
-          ksp.incremental=false
-          PROPS
+          echo 'org.gradle.jvmargs=-Xmx4096m' > gradle.properties
+          echo 'android.useAndroidX=true' >> gradle.properties
+          echo 'android.enableJetifier=false' >> gradle.properties
+          echo 'kotlin.incremental=false' >> gradle.properties
+          echo 'ksp.incremental=false' >> gradle.properties
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
       - name: Attempt original build
@@ -92,76 +90,74 @@ jobs:
 
           echo 'include ":app"' > settings.gradle
 
-          cat <<'ROOTBUILD' > build.gradle
-          buildscript {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-              dependencies {
-                  classpath "com.android.tools.build:gradle:8.5.0"
-              }
-          }
-          ROOTBUILD
+          # root build.gradle
+          echo 'buildscript {' > build.gradle
+          echo '    repositories {' >> build.gradle
+          echo '        google()' >> build.gradle
+          echo '        mavenCentral()' >> build.gradle
+          echo '    }' >> build.gradle
+          echo '    dependencies {' >> build.gradle
+          echo '        classpath "com.android.tools.build:gradle:8.5.0"' >> build.gradle
+          echo '    }' >> build.gradle
+          echo '}' >> build.gradle
 
-          cat <<'APPBUILD' > app/build.gradle
-          apply plugin: 'com.android.application'
+          # app/build.gradle
+          echo 'apply plugin: "com.android.application"' > app/build.gradle
+          echo 'android {' >> app/build.gradle
+          echo '    namespace "com.fallback.apk"' >> app/build.gradle
+          echo '    compileSdk 33' >> app/build.gradle
+          echo '    defaultConfig {' >> app/build.gradle
+          echo '        applicationId "com.fallback.apk"' >> app/build.gradle
+          echo '        minSdk 21' >> app/build.gradle
+          echo '        targetSdk 33' >> app/build.gradle
+          echo '        versionCode 1' >> app/build.gradle
+          echo '        versionName "1.0"' >> app/build.gradle
+          echo '    }' >> app/build.gradle
+          echo '    signingConfigs {' >> app/build.gradle
+          echo '        debug {' >> app/build.gradle
+          echo '            storeFile file("debug.keystore")' >> app/build.gradle
+          echo '            storePassword "android"' >> app/build.gradle
+          echo '            keyAlias "androiddebugkey"' >> app/build.gradle
+          echo '            keyPassword "android"' >> app/build.gradle
+          echo '        }' >> app/build.gradle
+          echo '    }' >> app/build.gradle
+          echo '    buildTypes {' >> app/build.gradle
+          echo '        release {' >> app/build.gradle
+          echo '            minifyEnabled false' >> app/build.gradle
+          echo '        }' >> app/build.gradle
+          echo '    }' >> app/build.gradle
+          echo '}' >> app/build.gradle
 
-          android {
-              namespace "com.fallback.apk"
-              compileSdk 33
-              defaultConfig {
-                  applicationId "com.fallback.apk"
-                  minSdk 21
-                  targetSdk 33
-                  versionCode 1
-                  versionName "1.0"
-              }
-              signingConfigs {
-                  debug {
-                      storeFile file("debug.keystore")
-                      storePassword 'android'
-                      keyAlias 'androiddebugkey'
-                      keyPassword 'android'
-                  }
-              }
-              buildTypes {
-                  release {
-                      minifyEnabled false
-                  }
-              }
-          }
-          APPBUILD
+          # AndroidManifest.xml مع android:exported
+          echo '<?xml version="1.0" encoding="utf-8"?>' > app/src/main/AndroidManifest.xml
+          echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' >> app/src/main/AndroidManifest.xml
+          echo '    <application' >> app/src/main/AndroidManifest.xml
+          echo '        android:allowBackup="true"' >> app/src/main/AndroidManifest.xml
+          echo '        android:label="Fallback App"' >> app/src/main/AndroidManifest.xml
+          echo '        android:supportsRtl="true">' >> app/src/main/AndroidManifest.xml
+          echo '        <activity' >> app/src/main/AndroidManifest.xml
+          echo '            android:name=".MainActivity"' >> app/src/main/AndroidManifest.xml
+          echo '            android:exported="true">' >> app/src/main/AndroidManifest.xml
+          echo '            <intent-filter>' >> app/src/main/AndroidManifest.xml
+          echo '                <action android:name="android.intent.action.MAIN" />' >> app/src/main/AndroidManifest.xml
+          echo '                <category android:name="android.intent.category.LAUNCHER" />' >> app/src/main/AndroidManifest.xml
+          echo '            </intent-filter>' >> app/src/main/AndroidManifest.xml
+          echo '        </activity>' >> app/src/main/AndroidManifest.xml
+          echo '    </application>' >> app/src/main/AndroidManifest.xml
+          echo '</manifest>' >> app/src/main/AndroidManifest.xml
 
-          cat <<'MANIFEST' > app/src/main/AndroidManifest.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <application
-                  android:allowBackup="true"
-                  android:label="Fallback App"
-                  android:supportsRtl="true">
-                  <activity android:name=".MainActivity">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          MANIFEST
+          # MainActivity.java
+          echo 'package com.fallback.apk;' > app/src/main/java/com/fallback/apk/MainActivity.java
+          echo 'import android.app.Activity;' >> app/src/main/java/com/fallback/apk/MainActivity.java
+          echo 'import android.os.Bundle;' >> app/src/main/java/com/fallback/apk/MainActivity.java
+          echo 'public class MainActivity extends Activity {' >> app/src/main/java/com/fallback/apk/MainActivity.java
+          echo '    @Override' >> app/src/main/java/com/fallback/apk/MainActivity.java
+          echo '    protected void onCreate(Bundle savedInstanceState) {' >> app/src/main/java/com/fallback/apk/MainActivity.java
+          echo '        super.onCreate(savedInstanceState);' >> app/src/main/java/com/fallback/apk/MainActivity.java
+          echo '    }' >> app/src/main/java/com/fallback/apk/MainActivity.java
+          echo '}' >> app/src/main/java/com/fallback/apk/MainActivity.java
 
-          cat <<'JAVA' > app/src/main/java/com/fallback/apk/MainActivity.java
-          package com.fallback.apk;
-          import android.app.Activity;
-          import android.os.Bundle;
-          public class MainActivity extends Activity {
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-              }
-          }
-          JAVA
-
+          # Generate keystore
           keytool -genkey -v \
             -keystore app/debug.keystore \
             -alias androiddebugkey \
@@ -175,18 +171,15 @@ jobs:
 
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-          echo "Verifying project structure:"
-          pwd
-          ls -la
-          ls -la app/
-          ls -la app/src/main/
-          ls -la app/src/main/java/com/fallback/apk/
+          echo "Verifying essential files:"
+          ls -la app/src/main/AndroidManifest.xml
+          ls -la app/build.gradle
+          ls -la build.gradle
+          ls -la settings.gradle
 
-          echo "Starting Gradle build..."
           gradle wrapper --gradle-version 8.10
           ./gradlew assembleDebug --no-daemon --stacktrace -Djava.awt.headless=true
 
-          echo "Build successful, copying APK..."
           find . -name "*.apk" -exec cp {} ../output-apks/ \;
 
       - name: Collect APKs
