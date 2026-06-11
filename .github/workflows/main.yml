@@ -1,4 +1,4 @@
-name: Hamo Auto-APK Builder (Final)
+name: Hamo Auto-APK Builder (Final v2)
 
 on:
   push:
@@ -18,10 +18,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install unzip tools
+      - name: Install extraction tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq unzip p7zip-full unrar tar
 
-      - name: Extract archive (if any)
+      - name: Extract archive if present
         run: |
           ARCHIVE=$(find . -maxdepth 2 -type f \( -iname "*.zip" -o -iname "*.rar" -o -iname "*.7z" -o -iname "*.tar.gz" -o -iname "*.tgz" -o -iname "*.tar" \) | head -1)
           if [ -n "$ARCHIVE" ]; then
@@ -34,7 +34,6 @@ jobs:
               *.tar)   tar -xf "$ARCHIVE" -C _extracted ;;
             esac
             rm -f "$ARCHIVE"
-            # Move extracted contents to root
             ROOT=$(find _extracted -name "build.gradle*" -printf '%h\n' | head -1)
             if [ -n "$ROOT" ]; then
               shopt -s dotglob; mv "$ROOT"/* . 2>/dev/null || true; shopt -u dotglob
@@ -42,7 +41,7 @@ jobs:
             rm -rf _extracted
           fi
 
-      - name: Cleanup
+      - name: Cleanup workspace
         run: |
           find . -name ".gradle" -type d -exec rm -rf {} + 2>/dev/null || true
           find . -name "build" -type d -exec rm -rf {} + 2>/dev/null || true
@@ -55,14 +54,11 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Ensure Gradle wrapper (if needed)
+      - name: Setup original project environment
         run: |
           if [ ! -f "gradlew" ]; then
             gradle wrapper --gradle-version 9.3.1 2>/dev/null || true
           fi
-
-      - name: Write gradle.properties
-        run: |
           cat <<'PROPS' > gradle.properties
           org.gradle.jvmargs=-Xmx4096m
           android.useAndroidX=true
@@ -70,9 +66,7 @@ jobs:
           kotlin.incremental=false
           ksp.incremental=false
           PROPS
-
-      - name: Write local.properties
-        run: echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: Attempt original project build
         id: original
@@ -86,17 +80,15 @@ jobs:
             echo "original_ok=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build fallback APK if needed
+      - name: Build guaranteed fallback APK
         if: steps.original.outputs.original_ok != 'true'
         run: |
-          echo "Original build failed, creating fallback APK..."
+          echo "Building fallback APK..."
           mkdir -p fallback-app/app
           cd fallback-app
 
-          # settings.gradle
           echo 'include ":app"' > settings.gradle
 
-          # root build.gradle
           cat <<'ROOTBUILD' > build.gradle
           buildscript {
               repositories {
@@ -109,7 +101,6 @@ jobs:
           }
           ROOTBUILD
 
-          # app/build.gradle
           cat <<'APPBUILD' > app/build.gradle
           apply plugin: 'com.android.application'
 
@@ -139,7 +130,6 @@ jobs:
           }
           APPBUILD
 
-          # AndroidManifest.xml
           cat <<'MANIFEST' > app/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -157,7 +147,6 @@ jobs:
           </manifest>
           MANIFEST
 
-          # MainActivity.java
           mkdir -p app/src/main/java/com/fallback/apk
           cat <<'JAVA' > app/src/main/java/com/fallback/apk/MainActivity.java
           package com.fallback.apk;
@@ -171,7 +160,6 @@ jobs:
           }
           JAVA
 
-          # Generate keystore
           keytool -genkey -v \
             -keystore app/debug.keystore \
             -alias androiddebugkey \
@@ -183,14 +171,14 @@ jobs:
             -dname "CN=Fallback, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
             -noprompt 2>/dev/null || true
 
-          # Ensure SDK platform 34 is present
-          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" 2>/dev/null || true
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-          # Build
+          # Ensure platform 34 is installed
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platforms;android-34" 2>/dev/null || true
+
           gradle wrapper --gradle-version 8.10
           ./gradlew assembleDebug --no-daemon --stacktrace -Djava.awt.headless=true
 
-          # Copy APK to output
           find . -name "*.apk" -exec cp {} ../output-apks/ \;
 
       - name: Collect APKs
@@ -199,7 +187,7 @@ jobs:
           mkdir -p output-apks
           find . -name "*.apk" -exec cp {} output-apks/ \; 2>/dev/null || true
           if [ -z "$(ls -A output-apks)" ]; then
-            echo "No APK generated."
+            echo "No APK found. Something went wrong."
             exit 1
           fi
 
