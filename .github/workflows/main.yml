@@ -1,211 +1,103 @@
-name: Hamo Auto-APK Builder
+name: Hamo Auto-APK Builder (Final)
 
 on:
   push:
     branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
-    inputs:
-      java-version:
-        description: 'Java version'
-        required: false
-        default: '17'
 
 env:
-  DEFAULT_JAVA_VERSION: ${{ github.event.inputs.java-version || '17' }}
-  ANDROID_SDK_ROOT: "/usr/local/lib/android/sdk"
-  TMP_WORKSPACE: "omni_extracted_workspace"
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
-  infinite-build:
-    name: Universal Android Cyber-Compiler
+  build:
+    name: Build APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          clean: true
 
-      - name: Install Extraction Tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq unzip p7zip-full unrar tar gzip coreutils sed file
+      - name: Install unzip tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq unzip p7zip-full unrar tar
 
-      - name: Auto-Detect & Extract Archive
-        id: extract
+      - name: Extract archive (if any)
         run: |
-          EXTS=(zip rar 7z tar.gz tgz tar)
-          FOUND_ARCH=""
-          FOUND_EXT=""
-          for e in "${EXTS[@]}"; do
-            CANDIDATE=$(find . -maxdepth 2 -type f \( -iname "*.$e" \) -print -quit)
-            if [ -n "$CANDIDATE" ]; then
-              FOUND_ARCH="$CANDIDATE"
-              FOUND_EXT="$e"
-              break
+          ARCHIVE=$(find . -maxdepth 2 -type f \( -iname "*.zip" -o -iname "*.rar" -o -iname "*.7z" -o -iname "*.tar.gz" -o -iname "*.tgz" -o -iname "*.tar" \) | head -1)
+          if [ -n "$ARCHIVE" ]; then
+            mkdir -p _extracted
+            case "$ARCHIVE" in
+              *.zip)   unzip -q -o "$ARCHIVE" -d _extracted ;;
+              *.rar)   unrar x -o+ "$ARCHIVE" _extracted/ ;;
+              *.7z)    7z x "$ARCHIVE" -o_extracted -y ;;
+              *.tar.gz|*.tgz) tar -xzf "$ARCHIVE" -C _extracted ;;
+              *.tar)   tar -xf "$ARCHIVE" -C _extracted ;;
+            esac
+            rm -f "$ARCHIVE"
+            # Move extracted contents to root
+            ROOT=$(find _extracted -name "build.gradle*" -printf '%h\n' | head -1)
+            if [ -n "$ROOT" ]; then
+              shopt -s dotglob; mv "$ROOT"/* . 2>/dev/null || true; shopt -u dotglob
             fi
-          done
-
-          if [ -z "$FOUND_ARCH" ]; then
-            if find . -maxdepth 3 -name 'build.gradle*' | grep -q .; then
-              echo "RAW_PROJECT=true" >> $GITHUB_ENV
-              exit 0
-            else
-              echo "No archive and no build.gradle found"
-              exit 1
-            fi
+            rm -rf _extracted
           fi
 
-          mkdir -p $TMP_WORKSPACE
-
-          case "$FOUND_EXT" in
-            zip)   unzip -q -o "$FOUND_ARCH" -d $TMP_WORKSPACE ;;
-            rar)   unrar x -o+ "$FOUND_ARCH" $TMP_WORKSPACE/ ;;
-            7z)    7z x "$FOUND_ARCH" -o$TMP_WORKSPACE -y -bso0 ;;
-            tar.gz|tgz) tar -xzf "$FOUND_ARCH" -C $TMP_WORKSPACE ;;
-            tar)   tar -xf "$FOUND_ARCH" -C $TMP_WORKSPACE ;;
-            *)     echo "Unsupported extension"; exit 1 ;;
-          esac
-
-          rm -f "$FOUND_ARCH"
-          echo "RAW_PROJECT=false" >> $GITHUB_ENV
-
-      - name: Locate & Move Project Root
-        if: env.RAW_PROJECT != 'true'
+      - name: Cleanup
         run: |
-          TRUE_ROOT=$(find $TMP_WORKSPACE -type f \( -name "build.gradle" -o -name "build.gradle.kts" \) -printf '%h\n' | head -1)
-          if [ -z "$TRUE_ROOT" ]; then
-            echo "No build.gradle inside archive"
-            exit 1
-          fi
-
-          if [ "$TRUE_ROOT" != "." ] && [ "$TRUE_ROOT" != "./" ]; then
-            shopt -s dotglob
-            mv "$TRUE_ROOT"/* .  2>/dev/null || true
-            shopt -u dotglob
-          fi
-
-          rm -rf $TMP_WORKSPACE
-
-      - name: Deep Cleanse Workspace
-        run: |
-          find . -name "local.properties" -delete
           find . -name ".gradle" -type d -exec rm -rf {} + 2>/dev/null || true
-          find . -name ".idea" -type d -exec rm -rf {} + 2>/dev/null || true
           find . -name "build" -type d -exec rm -rf {} + 2>/dev/null || true
-          find . -name "*.iml" -delete 2>/dev/null || true
+          find . -name ".idea" -type d -exec rm -rf {} + 2>/dev/null || true
+          find . -name "local.properties" -delete
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: ${{ env.DEFAULT_JAVA_VERSION }}
-          cache: 'gradle'
+          java-version: '17'
 
-      - name: Prepare Gradle and Properties for Original Project
+      - name: Ensure Gradle wrapper (if needed)
         run: |
           if [ ! -f "gradlew" ]; then
             gradle wrapper --gradle-version 9.3.1 2>/dev/null || true
-          else
-            WRAPPER_PROP=$(find . -name "gradle-wrapper.properties" | head -1)
-            if [ -n "$WRAPPER_PROP" ]; then
-              sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-bin.zip|' "$WRAPPER_PROP"
-            fi
           fi
-          chmod +x gradlew 2>/dev/null || true
-          sed -i 's/\r$//' gradlew 2>/dev/null || true
 
-          cat <<'PROPEOF' > gradle.properties
-          org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true
-          org.gradle.parallel=false
-          org.gradle.configureondemand=false
-          org.gradle.caching=false
-          org.gradle.daemon=false
+      - name: Write gradle.properties
+        run: |
+          cat <<'PROPS' > gradle.properties
+          org.gradle.jvmargs=-Xmx4096m
           android.useAndroidX=true
           android.enableJetifier=false
-          kotlin.code.style=official
           kotlin.incremental=false
-          kotlin.compiler.execution.strategy=in-process
           ksp.incremental=false
-          PROPEOF
+          PROPS
 
-      - name: Ensure settings.gradle includes app module
-        run: |
-          if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
-            echo 'include ":app"' > settings.gradle
-          elif [ -f "settings.gradle" ] && ! grep -q ':app' settings.gradle; then
-            echo 'include ":app"' >> settings.gradle
-          elif [ -f "settings.gradle.kts" ] && ! grep -q ':app' settings.gradle.kts; then
-            echo 'include(":app")' >> settings.gradle.kts
-          fi
+      - name: Write local.properties
+        run: echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
 
-      - name: Fix Repositories and Kotlin Version
-        run: |
-          find . \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0 | while IFS= read -r -d '' gradlefile; do
-            if ! grep -q 'google()' "$gradlefile"; then
-              sed -i 's#repositories {#repositories {\n        google()\n        mavenCentral()#g' "$gradlefile"
-            fi
-            if ! grep -q 'jitpack.io' "$gradlefile"; then
-              sed -i 's#repositories {#repositories {\n        maven { url "https://jitpack.io" }#g' "$gradlefile"
-            fi
-            if grep -q 'kotlin("jvm")' "$gradlefile" 2>/dev/null; then
-              sed -i 's/kotlin("jvm") version "[^"]*"/kotlin("jvm") version "1.9.0"/g' "$gradlefile"
-            fi
-            if grep -q 'kotlin_version' "$gradlefile" 2>/dev/null; then
-              sed -i "s/kotlin_version = '[^']*'/kotlin_version = '1.9.0'/g" "$gradlefile"
-            fi
-          done
-
-      - name: Generate Debug Keystore and local.properties
-        run: |
-          keytool -genkey -v \
-            -keystore debug.keystore \
-            -alias androiddebugkey \
-            -storepass android \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Hamo, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
-            -noprompt 2>/dev/null || true
-          find . -type d \( -name "app" -o -name "src" \) | while read -r dir; do
-            cp debug.keystore "$dir/" 2>/dev/null || true
-          done
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-
-      - name: Attempt Original Build
-        id: original_build
+      - name: Attempt original project build
+        id: original
         continue-on-error: true
         run: |
           set +e
-          ./gradlew clean --no-daemon --no-configuration-cache 2>&1 || true
-          if ./gradlew assembleDebug --no-daemon --stacktrace --no-configuration-cache -Djava.awt.headless=true; then
-            echo "ORIGINAL_BUILD_OK=1" >> $GITHUB_ENV
-            exit 0
-          elif ./gradlew :app:assembleDebug --no-daemon --stacktrace --no-configuration-cache -Djava.awt.headless=true; then
-            echo "ORIGINAL_BUILD_OK=1" >> $GITHUB_ENV
-            exit 0
+          ./gradlew assembleDebug --no-daemon --stacktrace -Djava.awt.headless=true
+          if [ $? -eq 0 ]; then
+            echo "original_ok=true" >> $GITHUB_OUTPUT
           else
-            echo "ORIGINAL_BUILD_OK=0" >> $GITHUB_ENV
-            exit 1
+            echo "original_ok=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build Guaranteed Fallback APK
-        if: env.ORIGINAL_BUILD_OK == '0'
+      - name: Build fallback APK if needed
+        if: steps.original.outputs.original_ok != 'true'
         run: |
-          cd ..
-          rm -rf fallback-app
-          mkdir fallback-app
+          echo "Original build failed, creating fallback APK..."
+          mkdir -p fallback-app/app
           cd fallback-app
+
+          # settings.gradle
           echo 'include ":app"' > settings.gradle
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-          mkdir app
-          cat <<'EOF' > build.gradle
+
+          # root build.gradle
+          cat <<'ROOTBUILD' > build.gradle
           buildscript {
               repositories {
                   google()
@@ -215,17 +107,19 @@ jobs:
                   classpath "com.android.tools.build:gradle:8.5.0"
               }
           }
-          EOF
-          cat <<'EOF' > app/build.gradle
+          ROOTBUILD
+
+          # app/build.gradle
+          cat <<'APPBUILD' > app/build.gradle
           apply plugin: 'com.android.application'
 
           android {
               namespace "com.fallback.apk"
-              compileSdk 33
+              compileSdk 34
               defaultConfig {
                   applicationId "com.fallback.apk"
                   minSdk 21
-                  targetSdk 33
+                  targetSdk 34
                   versionCode 1
                   versionName "1.0"
               }
@@ -243,8 +137,10 @@ jobs:
                   }
               }
           }
-          EOF
-          cat <<'EOF' > app/AndroidManifest.xml
+          APPBUILD
+
+          # AndroidManifest.xml
+          cat <<'MANIFEST' > app/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <application
@@ -259,9 +155,11 @@ jobs:
                   </activity>
               </application>
           </manifest>
-          EOF
+          MANIFEST
+
+          # MainActivity.java
           mkdir -p app/src/main/java/com/fallback/apk
-          cat <<'EOF' > app/src/main/java/com/fallback/apk/MainActivity.java
+          cat <<'JAVA' > app/src/main/java/com/fallback/apk/MainActivity.java
           package com.fallback.apk;
           import android.app.Activity;
           import android.os.Bundle;
@@ -271,7 +169,9 @@ jobs:
                   super.onCreate(savedInstanceState);
               }
           }
-          EOF
+          JAVA
+
+          # Generate keystore
           keytool -genkey -v \
             -keystore app/debug.keystore \
             -alias androiddebugkey \
@@ -282,42 +182,30 @@ jobs:
             -validity 10000 \
             -dname "CN=Fallback, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
             -noprompt 2>/dev/null || true
-          gradle wrapper --gradle-version 8.10 2>/dev/null || true
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-33" 2>/dev/null || true
+
+          # Ensure SDK platform 34 is present
+          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" 2>/dev/null || true
+
+          # Build
+          gradle wrapper --gradle-version 8.10
           ./gradlew assembleDebug --no-daemon --stacktrace -Djava.awt.headless=true
-          find . -name "*.apk" -exec cp {} ../hamoplus/output-apks/ \;
+
+          # Copy APK to output
+          find . -name "*.apk" -exec cp {} ../output-apks/ \;
 
       - name: Collect APKs
         if: always()
         run: |
           mkdir -p output-apks
-          find . -type f -name "*.apk" -exec cp {} output-apks/ \;
-          if [ -n "$(ls -A output-apks)" ]; then
-            echo "APKS_FOUND=1" >> $GITHUB_ENV
-          else
-            echo "APKS_FOUND=0" >> $GITHUB_ENV
+          find . -name "*.apk" -exec cp {} output-apks/ \; 2>/dev/null || true
+          if [ -z "$(ls -A output-apks)" ]; then
+            echo "No APK generated."
+            exit 1
           fi
 
-      - name: Upload APK Artifact
-        if: env.APKS_FOUND == '1'
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hamo-Omnipotent-APK
+          name: Hamo-APK
           path: output-apks/*.apk
           retention-days: 7
-          if-no-files-found: error
-
-      - name: Upload Build Log (if no APK)
-        if: env.APKS_FOUND == '0'
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: |
-            *.log
-            **/build/reports/**
-          retention-days: 7
-          if-no-files-found: ignore
-
-      - name: Failure Summary
-        if: failure()
-        run: echo "Workflow failed. Check logs."
