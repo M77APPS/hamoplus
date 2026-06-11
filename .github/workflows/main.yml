@@ -1,12 +1,9 @@
-name: Hamo Auto-APK Builder (Final v2)
+name: Hamo Auto-APK Builder (Ultimate)
 
 on:
   push:
     branches: [ "main", "master" ]
   workflow_dispatch:
-
-env:
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
   build:
@@ -15,8 +12,13 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 platforms;android-33 build-tools;33.0.2'
 
       - name: Install extraction tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq unzip p7zip-full unrar tar
@@ -54,7 +56,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup original project environment
+      - name: Setup original project Gradle
         run: |
           if [ ! -f "gradlew" ]; then
             gradle wrapper --gradle-version 9.3.1 2>/dev/null || true
@@ -66,9 +68,9 @@ jobs:
           kotlin.incremental=false
           ksp.incremental=false
           PROPS
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-      - name: Attempt original project build
+      - name: Attempt original build
         id: original
         continue-on-error: true
         run: |
@@ -83,7 +85,7 @@ jobs:
       - name: Build guaranteed fallback APK
         if: steps.original.outputs.original_ok != 'true'
         run: |
-          echo "Building fallback APK..."
+          echo "Original failed, creating fallback APK..."
           mkdir -p fallback-app/app
           cd fallback-app
 
@@ -106,11 +108,11 @@ jobs:
 
           android {
               namespace "com.fallback.apk"
-              compileSdk 34
+              compileSdk 33
               defaultConfig {
                   applicationId "com.fallback.apk"
                   minSdk 21
-                  targetSdk 34
+                  targetSdk 33
                   versionCode 1
                   versionName "1.0"
               }
@@ -171,10 +173,7 @@ jobs:
             -dname "CN=Fallback, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
             -noprompt 2>/dev/null || true
 
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-
-          # Ensure platform 34 is installed
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platforms;android-34" 2>/dev/null || true
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
           gradle wrapper --gradle-version 8.10
           ./gradlew assembleDebug --no-daemon --stacktrace -Djava.awt.headless=true
@@ -187,7 +186,7 @@ jobs:
           mkdir -p output-apks
           find . -name "*.apk" -exec cp {} output-apks/ \; 2>/dev/null || true
           if [ -z "$(ls -A output-apks)" ]; then
-            echo "No APK found. Something went wrong."
+            echo "No APK found."
             exit 1
           fi
 
