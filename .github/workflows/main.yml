@@ -108,17 +108,19 @@ jobs:
           java-version: ${{ env.DEFAULT_JAVA_VERSION }}
           cache: 'gradle'
 
-      - name: Force Gradle Wrapper to 9.3.1
+      - name: Set Gradle Wrapper for Original (try both versions)
         run: |
           if [ ! -f "gradlew" ]; then
             gradle wrapper --gradle-version 9.3.1 2>/dev/null || true
+          else
+            WRAPPER_PROP=$(find . -name "gradle-wrapper.properties" | head -1)
+            if [ -n "$WRAPPER_PROP" ]; then
+              CURRENT=$(grep -oP 'gradle-\K[0-9.]+' "$WRAPPER_PROP" | head -1)
+              if [ "$CURRENT" != "9.3.1" ]; then
+                sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-bin.zip|' "$WRAPPER_PROP"
+              fi
+            fi
           fi
-
-          WRAPPER_PROP=$(find . -name "gradle-wrapper.properties" | head -1)
-          if [ -n "$WRAPPER_PROP" ]; then
-            sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-bin.zip|' "$WRAPPER_PROP"
-          fi
-
           chmod +x gradlew 2>/dev/null || true
           sed -i 's/\r$//' gradlew 2>/dev/null || true
 
@@ -235,12 +237,11 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Install Android SDK Platform 33 (for fallback)
+      - name: Prepare SDK 33 for fallback
         if: env.BUILD_OK == '0'
-        run: |
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-33"
+        run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-33"
 
-      - name: Create Fallback APK (if original failed)
+      - name: Build Guaranteed Fallback APK
         if: env.BUILD_OK == '0'
         run: |
           cd ..
@@ -328,7 +329,7 @@ jobs:
             -validity 10000 \
             -dname "CN=Fallback, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
             -noprompt 2>/dev/null || true
-          gradle wrapper --gradle-version 9.3.1 2>/dev/null || true
+          gradle wrapper --gradle-version 8.10 2>/dev/null || true
           ./gradlew assembleDebug --no-daemon --stacktrace
           find . -name "*.apk" -exec cp {} ../hamoplus/output-apks/ \;
 
