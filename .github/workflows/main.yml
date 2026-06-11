@@ -14,7 +14,6 @@ on:
 
 env:
   DEFAULT_JAVA_VERSION: ${{ github.event.inputs.java-version || '17' }}
-  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true"
   ANDROID_SDK_ROOT: "/usr/local/lib/android/sdk"
   TMP_WORKSPACE: "omni_extracted_workspace"
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
@@ -108,24 +107,19 @@ jobs:
           java-version: ${{ env.DEFAULT_JAVA_VERSION }}
           cache: 'gradle'
 
-      - name: Set Gradle Wrapper for Original (try both versions)
+      - name: Prepare Gradle and Properties for Original Project
         run: |
           if [ ! -f "gradlew" ]; then
             gradle wrapper --gradle-version 9.3.1 2>/dev/null || true
           else
             WRAPPER_PROP=$(find . -name "gradle-wrapper.properties" | head -1)
             if [ -n "$WRAPPER_PROP" ]; then
-              CURRENT=$(grep -oP 'gradle-\K[0-9.]+' "$WRAPPER_PROP" | head -1)
-              if [ "$CURRENT" != "9.3.1" ]; then
-                sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-bin.zip|' "$WRAPPER_PROP"
-              fi
+              sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-bin.zip|' "$WRAPPER_PROP"
             fi
           fi
           chmod +x gradlew 2>/dev/null || true
           sed -i 's/\r$//' gradlew 2>/dev/null || true
 
-      - name: Inject Perfect gradle.properties
-        run: |
           cat <<'PROPEOF' > gradle.properties
           org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true
           org.gradle.parallel=false
@@ -140,26 +134,17 @@ jobs:
           ksp.incremental=false
           PROPEOF
 
-      - name: Ensure settings.gradle and app module
+      - name: Ensure settings.gradle includes app module
         run: |
           if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
-            if [ -d "app" ]; then
-              echo 'include ":app"' > settings.gradle
-            else
-              echo 'rootProject.name = "app"' > settings.gradle
-            fi
+            echo 'include ":app"' > settings.gradle
+          elif [ -f "settings.gradle" ] && ! grep -q ':app' settings.gradle; then
+            echo 'include ":app"' >> settings.gradle
+          elif [ -f "settings.gradle.kts" ] && ! grep -q ':app' settings.gradle.kts; then
+            echo 'include(":app")' >> settings.gradle.kts
           fi
 
-          if [ -d "app" ]; then
-            if [ -f "settings.gradle" ] && ! grep -q ':app' settings.gradle; then
-              echo 'include ":app"' >> settings.gradle
-            fi
-            if [ -f "settings.gradle.kts" ] && ! grep -q ':app' settings.gradle.kts; then
-              echo 'include(":app")' >> settings.gradle.kts
-            fi
-          fi
-
-      - name: AGP Version Detector & Repository Injector
+      - name: Fix Repositories and Kotlin Version
         run: |
           find . \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0 | while IFS= read -r -d '' gradlefile; do
             if ! grep -q 'google()' "$gradlefile"; then
@@ -168,23 +153,15 @@ jobs:
             if ! grep -q 'jitpack.io' "$gradlefile"; then
               sed -i 's#repositories {#repositories {\n        maven { url "https://jitpack.io" }#g' "$gradlefile"
             fi
-          done
-
-      - name: Kotlin & Compose Compatibility Fixer
-        run: |
-          find . \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0 | while IFS= read -r -d '' gradlefile; do
             if grep -q 'kotlin("jvm")' "$gradlefile" 2>/dev/null; then
               sed -i 's/kotlin("jvm") version "[^"]*"/kotlin("jvm") version "1.9.0"/g' "$gradlefile"
             fi
             if grep -q 'kotlin_version' "$gradlefile" 2>/dev/null; then
               sed -i "s/kotlin_version = '[^']*'/kotlin_version = '1.9.0'/g" "$gradlefile"
             fi
-            if grep -q 'composeOptions' "$gradlefile" 2>/dev/null; then
-              sed -i 's/kotlinCompilerExtensionVersion[[:space:]]*=[[:space:]]*"[^"]*"/kotlinCompilerExtensionVersion = "1.5.10"/g' "$gradlefile"
-            fi
           done
 
-      - name: Auto-Generate Debug Keystore
+      - name: Generate Debug Keystore and local.properties
         run: |
           keytool -genkey -v \
             -keystore debug.keystore \
@@ -196,53 +173,30 @@ jobs:
             -validity 10000 \
             -dname "CN=Hamo, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
             -noprompt 2>/dev/null || true
-
           find . -type d \( -name "app" -o -name "src" \) | while read -r dir; do
             cp debug.keystore "$dir/" 2>/dev/null || true
           done
-          cp debug.keystore ./debug.keystore 2>/dev/null || true
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-      - name: Write local.properties
-        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-
-      - name: First Clean Attempt
+      - name: Attempt Original Build
+        id: original_build
         continue-on-error: true
-        run: ./gradlew clean --no-daemon --no-configuration-cache --warning-mode=all 2>&1 || true
-
-      - name: Assemble Original Project
-        id: assemble
         run: |
           set +e
-          BUILD_OK=0
-          if ./gradlew assembleDebug --no-daemon --stacktrace --no-configuration-cache \
-               -Dorg.gradle.workers.max=2 \
-               -Djava.awt.headless=true; then
-            BUILD_OK=1
-          elif ./gradlew :app:assembleDebug --no-daemon --stacktrace --no-configuration-cache \
-               -Dorg.gradle.workers.max=2 \
-               -Djava.awt.headless=true; then
-            BUILD_OK=1
-          elif ./gradlew assembleRelease --no-daemon --stacktrace --no-configuration-cache \
-               -Dorg.gradle.workers.max=2 \
-               -Djava.awt.headless=true; then
-            BUILD_OK=1
-          elif ./gradlew assemble --no-daemon --stacktrace --no-configuration-cache; then
-            BUILD_OK=1
-          fi
-          echo "BUILD_OK=$BUILD_OK" >> $GITHUB_ENV
-          if [ "$BUILD_OK" -eq 1 ]; then
+          ./gradlew clean --no-daemon --no-configuration-cache 2>&1 || true
+          if ./gradlew assembleDebug --no-daemon --stacktrace --no-configuration-cache -Djava.awt.headless=true; then
+            echo "ORIGINAL_BUILD_OK=1" >> $GITHUB_ENV
+            exit 0
+          elif ./gradlew :app:assembleDebug --no-daemon --stacktrace --no-configuration-cache -Djava.awt.headless=true; then
+            echo "ORIGINAL_BUILD_OK=1" >> $GITHUB_ENV
             exit 0
           else
+            echo "ORIGINAL_BUILD_OK=0" >> $GITHUB_ENV
             exit 1
           fi
-        continue-on-error: true
-
-      - name: Prepare SDK 33 for fallback
-        if: env.BUILD_OK == '0'
-        run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-33"
 
       - name: Build Guaranteed Fallback APK
-        if: env.BUILD_OK == '0'
+        if: env.ORIGINAL_BUILD_OK == '0'
         run: |
           cd ..
           rm -rf fallback-app
@@ -263,9 +217,8 @@ jobs:
           }
           EOF
           cat <<'EOF' > app/build.gradle
-          plugins {
-              id 'com.android.application'
-          }
+          apply plugin: 'com.android.application'
+
           android {
               namespace "com.fallback.apk"
               compileSdk 33
@@ -330,10 +283,11 @@ jobs:
             -dname "CN=Fallback, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
             -noprompt 2>/dev/null || true
           gradle wrapper --gradle-version 8.10 2>/dev/null || true
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-33" 2>/dev/null || true
+          ./gradlew assembleDebug --no-daemon --stacktrace -Djava.awt.headless=true
           find . -name "*.apk" -exec cp {} ../hamoplus/output-apks/ \;
 
-      - name: Locate All Generated APKs
+      - name: Collect APKs
         if: always()
         run: |
           mkdir -p output-apks
@@ -366,5 +320,4 @@ jobs:
 
       - name: Failure Summary
         if: failure()
-        run: |
-          echo "Workflow failed. Check the logs above."
+        run: echo "Workflow failed. Check logs."
