@@ -1,4 +1,4 @@
-name: Hamo Auto-APK Builder (Ultimate Success)
+name: Hamo Auto-APK Builder (Ultimate Fixed)
 
 on:
   push:
@@ -53,33 +53,25 @@ jobs:
           mkdir -p final-app/app/src/main/java/com/example/app
           cd final-app
 
-          # settings.gradle with pluginManagement
-          cat > settings.gradle << 'SETTINGS'
-          pluginManagement {
+          echo 'include ":app"' > settings.gradle
+
+          # ROOT BUILD.GRADLE with buildscript
+          cat > build.gradle << 'ROOTBUILD'
+          buildscript {
               repositories {
                   google()
                   mavenCentral()
               }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
+              dependencies {
+                  classpath "com.android.tools.build:gradle:8.2.0"
               }
           }
-          rootProject.name = "final-app"
-          include ':app'
-          SETTINGS
+          ROOTBUILD
 
-          # root build.gradle (empty but valid)
-          echo '// Empty root build.gradle' > build.gradle
-
-          # app/build.gradle using plugins block
+          # APP BUILD.GRADLE with apply plugin
           cat > app/build.gradle << 'APPBUILD'
-          plugins {
-              id 'com.android.application'
-          }
+          apply plugin: 'com.android.application'
+
           android {
               namespace "com.example.app"
               compileSdk 33
@@ -106,7 +98,7 @@ jobs:
           }
           APPBUILD
 
-          # AndroidManifest.xml
+          # ANDROIDMANIFEST.XML
           cat > app/src/main/AndroidManifest.xml << 'MANIFEST'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -126,7 +118,7 @@ jobs:
           </manifest>
           MANIFEST
 
-          # MainActivity.java
+          # MAINACTIVITY.JAVA
           cat > app/src/main/java/com/example/app/MainActivity.java << 'JAVA'
           package com.example.app;
           import android.app.Activity;
@@ -158,7 +150,7 @@ jobs:
 
           cp app/build/outputs/apk/debug/app-debug.apk ../output-apks/guaranteed.apk
 
-      - name: Collect and Upload APK
+      - name: Collect APK
         run: |
           mkdir -p output-apks
           if [ ! -f final-app/app/build/outputs/apk/debug/app-debug.apk ]; then
