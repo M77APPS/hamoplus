@@ -1,4 +1,4 @@
-name: Hamo Auto-APK Builder (Ultimate Fixed)
+name: Hamo Auto-APK Builder (Final Guaranteed)
 
 on:
   push:
@@ -53,9 +53,26 @@ jobs:
           mkdir -p final-app/app/src/main/java/com/example/app
           cd final-app
 
-          echo 'include ":app"' > settings.gradle
+          # settings.gradle with pluginManagement and dependencyResolutionManagement
+          cat > settings.gradle << 'SETTINGS'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "final-app"
+          include ':app'
+          SETTINGS
 
-          # ROOT BUILD.GRADLE with buildscript
+          # Root build.gradle with buildscript
           cat > build.gradle << 'ROOTBUILD'
           buildscript {
               repositories {
@@ -68,7 +85,7 @@ jobs:
           }
           ROOTBUILD
 
-          # APP BUILD.GRADLE with apply plugin
+          # App build.gradle with apply plugin
           cat > app/build.gradle << 'APPBUILD'
           apply plugin: 'com.android.application'
 
@@ -98,7 +115,7 @@ jobs:
           }
           APPBUILD
 
-          # ANDROIDMANIFEST.XML
+          # AndroidManifest.xml
           cat > app/src/main/AndroidManifest.xml << 'MANIFEST'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -118,7 +135,7 @@ jobs:
           </manifest>
           MANIFEST
 
-          # MAINACTIVITY.JAVA
+          # MainActivity.java
           cat > app/src/main/java/com/example/app/MainActivity.java << 'JAVA'
           package com.example.app;
           import android.app.Activity;
