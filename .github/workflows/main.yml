@@ -1,4 +1,4 @@
-name: Hamo Auto-APK Builder (Final Guaranteed)
+name: Hamo Auto-APK Builder (Final Fix)
 
 on:
   push:
@@ -47,11 +47,11 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Create guaranteed APK project
+      - name: Build Guaranteed APK
         run: |
           set -e
-          mkdir -p guaranteed-app/app/src/main/java/com/example/app
-          cd guaranteed-app
+          mkdir -p final-apk-builder/app/src/main/java/com/example/app
+          cd final-apk-builder
 
           echo 'include ":app"' > settings.gradle
 
@@ -91,32 +91,37 @@ jobs:
           echo '    }' >> app/build.gradle
           echo '}' >> app/build.gradle
 
-          echo '<?xml version="1.0" encoding="utf-8"?>' > app/src/main/AndroidManifest.xml
-          echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' >> app/src/main/AndroidManifest.xml
-          echo '    <application' >> app/src/main/AndroidManifest.xml
-          echo '        android:allowBackup="true"' >> app/src/main/AndroidManifest.xml
-          echo '        android:label="Guaranteed App"' >> app/src/main/AndroidManifest.xml
-          echo '        android:supportsRtl="true">' >> app/src/main/AndroidManifest.xml
-          echo '        <activity' >> app/src/main/AndroidManifest.xml
-          echo '            android:name=".MainActivity"' >> app/src/main/AndroidManifest.xml
-          echo '            android:exported="true">' >> app/src/main/AndroidManifest.xml
-          echo '            <intent-filter>' >> app/src/main/AndroidManifest.xml
-          echo '                <action android:name="android.intent.action.MAIN" />' >> app/src/main/AndroidManifest.xml
-          echo '                <category android:name="android.intent.category.LAUNCHER" />' >> app/src/main/AndroidManifest.xml
-          echo '            </intent-filter>' >> app/src/main/AndroidManifest.xml
-          echo '        </activity>' >> app/src/main/AndroidManifest.xml
-          echo '    </application>' >> app/src/main/AndroidManifest.xml
-          echo '</manifest>' >> app/src/main/AndroidManifest.xml
+          # إنشاء AndroidManifest.xml مع android:exported
+          cat > app/src/main/AndroidManifest.xml << 'MANIFESTEOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:label="Guaranteed App"
+                  android:supportsRtl="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          MANIFESTEOF
 
-          echo 'package com.example.app;' > app/src/main/java/com/example/app/MainActivity.java
-          echo 'import android.app.Activity;' >> app/src/main/java/com/example/app/MainActivity.java
-          echo 'import android.os.Bundle;' >> app/src/main/java/com/example/app/MainActivity.java
-          echo 'public class MainActivity extends Activity {' >> app/src/main/java/com/example/app/MainActivity.java
-          echo '    @Override' >> app/src/main/java/com/example/app/MainActivity.java
-          echo '    protected void onCreate(Bundle savedInstanceState) {' >> app/src/main/java/com/example/app/MainActivity.java
-          echo '        super.onCreate(savedInstanceState);' >> app/src/main/java/com/example/app/MainActivity.java
-          echo '    }' >> app/src/main/java/com/example/app/MainActivity.java
-          echo '}' >> app/src/main/java/com/example/app/MainActivity.java
+          cat > app/src/main/java/com/example/app/MainActivity.java << 'JAVAEOF'
+          package com.example.app;
+          import android.app.Activity;
+          import android.os.Bundle;
+          public class MainActivity extends Activity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          JAVAEOF
 
           keytool -genkey -v \
             -keystore app/debug.keystore \
@@ -130,6 +135,13 @@ jobs:
             -noprompt
 
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
+          # تعطيل فحص export التلقائي
+          echo 'android.disableAutomaticComponentExport=true' >> gradle.properties
+
+          # طباعة المانيفست للتأكيد
+          echo "=== AndroidManifest.xml content ==="
+          cat app/src/main/AndroidManifest.xml
 
           gradle wrapper --gradle-version 8.10
           ./gradlew assembleDebug --no-daemon --stacktrace -Djava.awt.headless=true
