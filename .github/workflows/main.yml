@@ -1,4 +1,4 @@
-name: Hamo Auto-APK Builder (Final v3)
+name: Hamo Auto-APK Builder (Final Fix)
 
 on:
   push:
@@ -18,7 +18,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-33 build-tools;33.0.2 platforms;android-34 build-tools;34.0.0'
+          packages: 'platforms;android-33 build-tools;33.0.2'
 
       - name: Install extraction tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq unzip p7zip-full unrar tar
@@ -85,8 +85,9 @@ jobs:
       - name: Build guaranteed fallback APK
         if: steps.original.outputs.original_ok != 'true'
         run: |
-          echo "Original build failed, creating fallback APK..."
-          mkdir -p fallback-app/app
+          set -e
+          echo "Creating fallback project..."
+          mkdir -p fallback-app/app/src/main/java/com/fallback/apk
           cd fallback-app
 
           echo 'include ":app"' > settings.gradle
@@ -132,7 +133,7 @@ jobs:
           }
           APPBUILD
 
-          cat <<'MANIFEST' > app/AndroidManifest.xml
+          cat <<'MANIFEST' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <application
@@ -149,7 +150,6 @@ jobs:
           </manifest>
           MANIFEST
 
-          mkdir -p app/src/main/java/com/fallback/apk
           cat <<'JAVA' > app/src/main/java/com/fallback/apk/MainActivity.java
           package com.fallback.apk;
           import android.app.Activity;
@@ -175,9 +175,18 @@ jobs:
 
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
+          echo "Verifying project structure:"
+          pwd
+          ls -la
+          ls -la app/
+          ls -la app/src/main/
+          ls -la app/src/main/java/com/fallback/apk/
+
+          echo "Starting Gradle build..."
           gradle wrapper --gradle-version 8.10
           ./gradlew assembleDebug --no-daemon --stacktrace -Djava.awt.headless=true
 
+          echo "Build successful, copying APK..."
           find . -name "*.apk" -exec cp {} ../output-apks/ \;
 
       - name: Collect APKs
