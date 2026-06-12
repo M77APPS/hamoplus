@@ -1,0 +1,6 @@
+{
+  "name": "حمّو الإلكتروني",
+  "description": "تطبيق حماية متكامل يعمل كدرع صامت لفحص الروابط وحجب الهجمات وحماية البيانات.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
