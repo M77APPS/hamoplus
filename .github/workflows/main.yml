@@ -1,4 +1,4 @@
-name: Hamo Auto-APK Builder (Preserve Original)
+name: Hamo Auto-APK Builder (Final Solution)
 
 on:
   push:
@@ -47,14 +47,41 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Prepare minimal environment (non-destructive)
+      - name: Verify original project structure
         run: |
-          # تنظيف مخلفات قديمة فقط
+          echo "=== Checking project structure ==="
+          ls -la
+          echo ""
+          if [ -d "app" ]; then
+            echo "App folder exists"
+            ls -la app/
+            if [ -f "app/build.gradle" ] || [ -f "app/build.gradle.kts" ]; then
+              echo "app/build.gradle* found"
+            else
+              echo "ERROR: app/build.gradle* not found!"
+            fi
+          else
+            echo "ERROR: app folder not found!"
+          fi
+          echo ""
+          if [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
+            echo "settings.gradle* found"
+          else
+            echo "WARNING: settings.gradle* not found"
+          fi
+          echo ""
+          if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+            echo "build.gradle* found"
+          else
+            echo "WARNING: build.gradle* not found"
+          fi
+
+      - name: Prepare minimal environment
+        run: |
           find . -name ".gradle" -type d -exec rm -rf {} + 2>/dev/null || true
           find . -name "build" -type d -exec rm -rf {} + 2>/dev/null || true
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-          # إنشاء debug.keystore إن لم يوجد
           if [ ! -f debug.keystore ]; then
             keytool -genkey -v \
               -keystore debug.keystore \
@@ -67,15 +94,12 @@ jobs:
               -dname "CN=Debug, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
               -noprompt
           fi
-          # نسخه إلى مجلد app إن وجد
           [ -d "app" ] && cp debug.keystore app/debug.keystore 2>/dev/null || true
 
-          # ضبط gradle wrapper على 8.5 (فقط لو لم يكن موجودًا)
           if [ ! -f "gradlew" ]; then
             gradle wrapper --gradle-version 8.5 2>/dev/null || true
           fi
 
-          # كتابة gradle.properties إن لم تكن موجودة
           if [ ! -f gradle.properties ]; then
             cat <<'PROPS' > gradle.properties
           org.gradle.jvmargs=-Xmx4096m
@@ -86,19 +110,26 @@ jobs:
           PROPS
           fi
 
-      - name: Build original project (without modifying it)
+      - name: Build original project
         id: original_build
         continue-on-error: true
         run: |
-          set +e
-          ./gradlew clean --no-daemon 2>&1 || true
-          if ./gradlew assembleDebug --no-daemon --stacktrace -x lint -x test -Djava.awt.headless=true; then
-            echo "original_ok=true" >> $GITHUB_OUTPUT
-            mkdir -p output-apks
-            find . -path "*/build/outputs/apk/debug/*.apk" -exec cp {} output-apks/ \;
+          echo "=== Starting original project build ==="
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon --stacktrace -x lint -x test -Djava.awt.headless=true
+            BUILD_EXIT=$?
+            if [ $BUILD_EXIT -eq 0 ]; then
+              echo "original_ok=true" >> $GITHUB_OUTPUT
+              mkdir -p output-apks
+              find . -path "*/build/outputs/apk/debug/*.apk" -exec cp {} output-apks/ \;
+            else
+              echo "original_ok=false" >> $GITHUB_OUTPUT
+              echo "::error::Original build failed with exit code $BUILD_EXIT"
+            fi
           else
             echo "original_ok=false" >> $GITHUB_OUTPUT
-            echo "::error::Original project build failed. Check the logs above for details."
+            echo "::error::gradlew not found"
           fi
 
       - name: Build fallback APK if original failed
