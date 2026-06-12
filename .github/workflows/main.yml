@@ -1,96 +1,76 @@
-name: Build APK from uploaded ZIP
+name: بناء APK من ZIP
 
 on:
   workflow_dispatch:
     inputs:
-      zip_artifact:
-        description: 'Name of the artifact containing source.zip (leave empty to use source.zip from root)'
-        required: false
-        default: 'source-zip'
-        type: string
       build_type:
-        description: 'Build type'
-        required: false
-        default: 'release'
+        description: "نوع البناء (debug/release)"
+        required: true
+        default: "release"
         type: choice
         options:
           - debug
           - release
 
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      zip_exists: ${{ steps.check.outputs.zip_exists }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Check if source.zip exists in root
-        id: check
-        run: |
-          if [ -f source.zip ]; then
-            echo "zip_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "zip_exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️ No source.zip found in repository root. Please upload it as an artifact named '${{ inputs.zip_artifact }}' or add source.zip to root."
-          fi
-
   build:
-    needs: prepare
-    if: needs.prepare.outputs.zip_exists == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: سحب الكود (source.zip من المستودع)
         uses: actions/checkout@v4
-      
-      - name: Get source.zip
+
+      - name: فك ضغط source.zip
         run: |
-          # If you uploaded as artifact, download it (optional)
-          # Here we just use the file from root
-          ls -la source.zip
-      
-      - name: Extract source
-        run: |
-          mkdir workspace
-          unzip -q source.zip -d workspace/
-          cd workspace
-          # Flatten if needed
+          if [ ! -f source.zip ]; then
+            echo "❌ ملف source.zip غير موجود في جذر المستودع!"
+            exit 1
+          fi
+          mkdir project
+          unzip -q source.zip -d project/
+          cd project
+          # لو المجلد الداخلي واحد، نفلع المستوى
           if [ $(find . -maxdepth 1 -type d | wc -l) -eq 2 ]; then
             subdir=$(find . -maxdepth 1 -type d ! -name .)
             mv $subdir/* ./
             rmdir $subdir
           fi
-          ls -la
-      
-      - name: Setup JDK 17
+
+      - name: إعداد Java 17
         uses: actions/setup-java@v4
         with:
           java-version: 17
           distribution: 'temurin'
-      
-      - name: Setup Android SDK
+
+      - name: إعداد Android SDK
         uses: android-actions/setup-android@v3
-      
-      - name: Grant execute to gradlew
-        working-directory: workspace
+
+      - name: منح صلاحيات gradlew
+        working-directory: project
         run: chmod +x gradlew 2>/dev/null || true
-      
-      - name: Build APK
-        working-directory: workspace
+
+      - name: بناء التطبيق
+        working-directory: project
         run: |
           if [ "${{ inputs.build_type }}" = "release" ]; then
             ./gradlew assembleRelease --no-daemon
           else
             ./gradlew assembleDebug --no-daemon
           fi
-      
-      - name: Find and upload APK
-        working-directory: workspace
+
+      - name: البحث عن APK
+        id: find_apk
+        working-directory: project
         run: |
-          apk=$(find . -name "*.apk" | head -1)
-          cp "$apk" ../output.apk
-      - name: Upload APK
+          apk_path=$(find . -name "*.apk" | head -1)
+          if [ -z "$apk_path" ]; then
+            echo "❌ لم يتم العثور على APK!"
+            exit 1
+          fi
+          cp "$apk_path" ../app.apk
+          echo "✅ تم العثور على APK"
+
+      - name: رفع APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-${{ inputs.build_type }}
-          path: output.apk
+          name: HemoSilentShield-${{ inputs.build_type }}
+          path: app.apk
