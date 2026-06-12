@@ -1,319 +1,96 @@
-name: Hamo Auto-APK Builder (Final Hybrid)
+name: Build APK from uploaded ZIP
 
 on:
-  push:
-    branches: [ "main", "master" ]
   workflow_dispatch:
+    inputs:
+      zip_artifact:
+        description: 'Name of the artifact containing source.zip (leave empty to use source.zip from root)'
+        required: false
+        default: 'source-zip'
+        type: string
+      build_type:
+        description: 'Build type'
+        required: false
+        default: 'release'
+        type: choice
+        options:
+          - debug
+          - release
 
 jobs:
-  build:
-    name: Build APK
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    outputs:
+      zip_exists: ${{ steps.check.outputs.zip_exists }}
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'platforms;android-33 build-tools;33.0.2'
-
-      - name: Install tools and extract archive
+      - name: Check if source.zip exists in root
+        id: check
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq unzip p7zip-full unrar tar
-          ARCHIVE=$(find . -maxdepth 2 -type f \( -iname "*.zip" -o -iname "*.rar" -o -iname "*.7z" -o -iname "*.tar.gz" -o -iname "*.tgz" -o -iname "*.tar" \) | head -1)
-          if [ -n "$ARCHIVE" ]; then
-            mkdir -p _extracted
-            case "$ARCHIVE" in
-              *.zip)   unzip -q -o "$ARCHIVE" -d _extracted ;;
-              *.rar)   unrar x -o+ "$ARCHIVE" _extracted/ ;;
-              *.7z)    7z x "$ARCHIVE" -o_extracted -y ;;
-              *.tar.gz|*.tgz) tar -xzf "$ARCHIVE" -C _extracted ;;
-              *.tar)   tar -xf "$ARCHIVE" -C _extracted ;;
-            esac
-            rm -f "$ARCHIVE"
-            ROOT=$(find _extracted -name "build.gradle*" -printf '%h\n' | head -1)
-            if [ -n "$ROOT" ]; then
-              shopt -s dotglob; mv "$ROOT"/* . 2>/dev/null || true; shopt -u dotglob
-            fi
-            rm -rf _extracted
+          if [ -f source.zip ]; then
+            echo "zip_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "zip_exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ No source.zip found in repository root. Please upload it as an artifact named '${{ inputs.zip_artifact }}' or add source.zip to root."
           fi
 
-      - name: Setup Java 17
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.zip_exists == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Get source.zip
+        run: |
+          # If you uploaded as artifact, download it (optional)
+          # Here we just use the file from root
+          ls -la source.zip
+      
+      - name: Extract source
+        run: |
+          mkdir workspace
+          unzip -q source.zip -d workspace/
+          cd workspace
+          # Flatten if needed
+          if [ $(find . -maxdepth 1 -type d | wc -l) -eq 2 ]; then
+            subdir=$(find . -maxdepth 1 -type d ! -name .)
+            mv $subdir/* ./
+            rmdir $subdir
+          fi
+          ls -la
+      
+      - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
+          java-version: 17
           distribution: 'temurin'
-          java-version: '17'
-
-      - name: Fix original project environment
+      
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      
+      - name: Grant execute to gradlew
+        working-directory: workspace
+        run: chmod +x gradlew 2>/dev/null || true
+      
+      - name: Build APK
+        working-directory: workspace
         run: |
-          # تنظيف
-          find . -name ".gradle" -type d -exec rm -rf {} + 2>/dev/null || true
-          find . -name "build" -type d -exec rm -rf {} + 2>/dev/null || true
-
-          # إعداد local.properties
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-
-          # إصلاح gradle wrapper
-          if [ ! -f "gradlew" ]; then
-            gradle wrapper --gradle-version 8.5 2>/dev/null || true
+          if [ "${{ inputs.build_type }}" = "release" ]; then
+            ./gradlew assembleRelease --no-daemon
           else
-            WRAPPER_PROP=$(find . -name "gradle-wrapper.properties" | head -1)
-            if [ -n "$WRAPPER_PROP" ]; then
-              sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.5-bin.zip|' "$WRAPPER_PROP"
-            fi
+            ./gradlew assembleDebug --no-daemon
           fi
-          chmod +x gradlew 2>/dev/null || true
-          sed -i 's/\r$//' gradlew 2>/dev/null || true
-
-          # كتابة gradle.properties
-          cat <<'PROPS' > gradle.properties
-          org.gradle.jvmargs=-Xmx4096m
-          android.useAndroidX=true
-          android.enableJetifier=false
-          kotlin.incremental=false
-          ksp.incremental=false
-          android.disableAutomaticComponentExport=true
-          PROPS
-
-          # إنشاء debug.keystore
-          keytool -genkey -v \
-            -keystore debug.keystore \
-            -alias androiddebugkey \
-            -storepass android \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Debug, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
-            -noprompt 2>/dev/null || true
-
-          # نسخ keystore لمجلد app
-          [ -d "app" ] && cp debug.keystore app/ 2>/dev/null || true
-
-          # كتابة settings.gradle إذا لم يوجد
-          if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
-            cat > settings.gradle << 'SETTINGS'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.name = "original-app"
-          include ':app'
-          SETTINGS
-          fi
-
-          # إصلاح root build.gradle (إذا كان يستخدم plugins { } نحوله لـ buildscript)
-          if [ -f "build.gradle.kts" ]; then
-            # نحذف .kts ونكتب build.gradle جديد
-            mv build.gradle.kts build.gradle.kts.bak
-            cat > build.gradle << 'ROOTBUILD'
-          buildscript {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-              dependencies {
-                  classpath "com.android.tools.build:gradle:8.2.0"
-              }
-          }
-          ROOTBUILD
-          elif [ -f "build.gradle" ]; then
-            # إذا موجود نتأكد من وجود buildscript
-            if ! grep -q "buildscript" build.gradle; then
-              sed -i '1s/^/buildscript {\n    repositories {\n        google()\n        mavenCentral()\n    }\n    dependencies {\n        classpath "com.android.tools.build:gradle:8.2.0"\n    }\n}\n/' build.gradle
-            fi
-          fi
-
-          # إصلاح app/build.gradle: تحويل plugins { id ... } إلى apply plugin
-          if [ -f "app/build.gradle.kts" ]; then
-            mv app/build.gradle.kts app/build.gradle.kts.bak
-            cat > app/build.gradle << 'APPBUILD'
-          apply plugin: 'com.android.application'
-
-          android {
-              compileSdk 33
-              defaultConfig {
-                  applicationId "com.example.app"
-                  minSdk 21
-                  targetSdk 33
-                  versionCode 1
-                  versionName "1.0"
-              }
-              signingConfigs {
-                  debug {
-                      storeFile file("debug.keystore")
-                      storePassword 'android'
-                      keyAlias 'androiddebugkey'
-                      keyPassword 'android'
-                  }
-              }
-              buildTypes {
-                  release {
-                      minifyEnabled false
-                  }
-              }
-          }
-          APPBUILD
-          elif [ -f "app/build.gradle" ]; then
-            if grep -q 'id "com.android.application"' app/build.gradle; then
-              sed -i 's/id "com.android.application"/apply plugin: "com.android.application"/g' app/build.gradle
-            fi
-          fi
-
-      - name: Attempt Original Build
-        id: original_build
-        continue-on-error: true
+      
+      - name: Find and upload APK
+        working-directory: workspace
         run: |
-          set +e
-          ./gradlew clean --no-daemon 2>&1 || true
-          if ./gradlew assembleDebug --no-daemon --stacktrace -x lint -x test -Djava.awt.headless=true; then
-            echo "original_ok=true" >> $GITHUB_OUTPUT
-            mkdir -p output-apks
-            find . -path "*/build/outputs/apk/debug/*.apk" -exec cp {} output-apks/ \;
-          else
-            echo "original_ok=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Build fallback if original failed
-        if: steps.original_build.outputs.original_ok != 'true'
-        run: |
-          echo "⚠️ Original project failed to build. Creating fallback APK."
-          mkdir -p final-app/app/src/main/java/com/example/app
-          cd final-app
-
-          cat > settings.gradle << 'SETTINGS'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.name = "final-app"
-          include ':app'
-          SETTINGS
-
-          cat > build.gradle << 'ROOTBUILD'
-          buildscript {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-              dependencies {
-                  classpath "com.android.tools.build:gradle:8.2.0"
-              }
-          }
-          ROOTBUILD
-
-          cat > app/build.gradle << 'APPBUILD'
-          apply plugin: 'com.android.application'
-
-          android {
-              namespace "com.example.app"
-              compileSdk 33
-              defaultConfig {
-                  applicationId "com.example.app"
-                  minSdk 21
-                  targetSdk 33
-                  versionCode 1
-                  versionName "1.0"
-              }
-              signingConfigs {
-                  debug {
-                      storeFile file("debug.keystore")
-                      storePassword 'android'
-                      keyAlias 'androiddebugkey'
-                      keyPassword 'android'
-                  }
-              }
-              buildTypes {
-                  release {
-                      minifyEnabled false
-                  }
-              }
-          }
-          APPBUILD
-
-          cat > app/src/main/AndroidManifest.xml << 'MANIFEST'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <application
-                  android:allowBackup="true"
-                  android:label="Fallback App"
-                  android:supportsRtl="true">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          MANIFEST
-
-          cat > app/src/main/java/com/example/app/MainActivity.java << 'JAVA'
-          package com.example.app;
-          import android.app.Activity;
-          import android.os.Bundle;
-          public class MainActivity extends Activity {
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-              }
-          }
-          JAVA
-
-          keytool -genkey -v \
-            -keystore app/debug.keystore \
-            -alias androiddebugkey \
-            -storepass android \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Fallback, OU=Dev, O=CyberDefense, L=Cairo, ST=EG, C=EG" \
-            -noprompt
-
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-          gradle wrapper --gradle-version 8.5
-          ./gradlew assembleDebug --no-daemon --stacktrace -Djava.awt.headless=true
-          mkdir -p ../output-apks
-          cp app/build/outputs/apk/debug/app-debug.apk ../output-apks/fallback.apk
-          echo "::warning ::Original project failed, fallback APK generated."
-
-      - name: Collect APKs
-        if: always()
-        run: |
-          mkdir -p output-apks
-          find . -name "*.apk" -exec cp {} output-apks/ \; 2>/dev/null || true
-          if [ -z "$(ls -A output-apks)" ]; then
-            echo "No APK found."
-            exit 1
-          fi
-
+          apk=$(find . -name "*.apk" | head -1)
+          cp "$apk" ../output.apk
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hamo-APK
-          path: output-apks/*.apk
-          retention-days: 7
+          name: app-${{ inputs.build_type }}
+          path: output.apk
